@@ -24,7 +24,8 @@ Copy `.env.example` to `.env` and set:
 | `PRIVATE_KEY` | Key for an address registered as `LichessOracle` attester |
 | `CHAIN_ID` | Chain id where the oracle contract lives (`31337` for local Hardhat) |
 | `LICHESS_ORACLE_ADDRESS` | Deployed `LichessOracle` contract address (same as wager-backend) |
-| `PORT` | HTTP port (default `3001`) |
+| `PORT` | HTTP port (default `3001`; Render sets this automatically) |
+| `HOST` | Bind address (default `0.0.0.0` for cloud deploys; use `127.0.0.1` for localhost-only) |
 
 For local dev with wagerv2:
 

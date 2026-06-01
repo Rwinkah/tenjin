@@ -17,10 +17,19 @@ async fn main() {
 
     let state = Arc::new(AppState::from_env());
 
+    let host = std::env::var("HOST")
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or_else(|| "0.0.0.0".to_string());
+
     let port: u16 = std::env::var("PORT")
         .ok()
         .and_then(|value| value.trim().parse().ok())
         .unwrap_or(3001);
+
+    let addr: SocketAddr = format!("{host}:{port}")
+        .parse()
+        .expect("HOST and PORT must form a valid socket address");
 
     let cors = CorsLayer::new()
         .allow_origin(Any)
@@ -33,7 +42,6 @@ async fn main() {
         .layer(cors)
         .with_state(state);
 
-    let addr = SocketAddr::from(([127, 0, 0, 1], port));
     println!("tenjin listening on http://{addr}");
     let listener = tokio::net::TcpListener::bind(addr).await.unwrap();
     axum::serve(listener, app).await.unwrap();
