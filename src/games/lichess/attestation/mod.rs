@@ -25,6 +25,11 @@ sol! {
         uint256 deadline;
     }
 
+    struct DrawOutcome {
+        bytes32 wagerId;
+        uint256 deadline;
+    }
+
     struct CompetitionOutcome {
         bytes32 wagerId;
         bytes32 placementsHash;
@@ -93,6 +98,27 @@ pub async fn build_binary_attestation(
         wagerId: wager_id,
         winner,
         loser,
+        deadline,
+    };
+
+    let signing_hash = message.eip712_signing_hash(&domain);
+    let signature = signer.sign_hash(&signing_hash).await?;
+    let data = encode_attestation_data(deadline, signature);
+
+    Ok(OracleAttestation { oracle, data })
+}
+
+/// Builds the on-chain attestation for a binary (1v1) **draw** settlement.
+pub async fn build_draw_attestation(
+    signer: &PrivateKeySigner,
+    oracle: Address,
+    wager_id: B256,
+    chain_id: u64,
+) -> Result<OracleAttestation, alloy::signers::Error> {
+    let deadline = attestation_deadline();
+    let domain = lichess_oracle_domain(chain_id, oracle);
+    let message = DrawOutcome {
+        wagerId: wager_id,
         deadline,
     };
 

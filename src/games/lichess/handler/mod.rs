@@ -8,7 +8,7 @@ use reqwest::header::ACCEPT;
 use serde::{Deserialize, Serialize};
 
 use crate::games::lichess::attestation::{
-    build_binary_attestation, build_competition_attestation, RankedPlacement,
+    build_binary_attestation, build_competition_attestation, build_draw_attestation, RankedPlacement,
 };
 use crate::games::lichess::models::{LichessColor, LichessGameExport, LichessStatus};
 use crate::shared::models::AppState;
@@ -123,6 +123,71 @@ pub async fn binary_attestation(
         loser,
         winner_color,
         winner_lichess_id,
+        game_id: game.id,
+        raw_status: game.status,
+    }))
+}
+
+// ---------- Draw (1v1) attestation ----------
+
+#[derive(Debug, Deserialize)]
+pub struct DrawAttestationRequest {
+    pub wager_id: B256,
+    pub game_id: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct DrawAttestationResponse {
+    pub oracle: Address,
+    pub data: Bytes,
+    pub game_id: String,
+    pub raw_status: LichessStatus,
+}
+
+/// `POST /attestations/draw`
+///
+/// Fetches the Lichess game, requires a drawn result, then returns a signed attestation for `lcSettleDraw`.
+pub async fn draw_attestation(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<DrawAttestationRequest>,
+) -> Result<Json<DrawAttestationResponse>, (StatusCode, String)> {
+    validate_game_id(&req.game_id)?;
+
+    let game = fetch_lichess_game(&state, &req.game_id).await?;
+
+    let is_draw = matches!(
+        game.status,
+        LichessStatus::Draw | LichessStatus::Stalemate
+    );
+    if !is_draw {
+        return Err((
+            StatusCode::UNPROCESSABLE_ENTITY,
+            format!(
+                "game `{}` is not a draw: status `{:?}`, winner `{:?}`",
+                game.id, game.status, game.winner
+            ),
+        ));
+    }
+
+    let chain_id = signer_chain_id(&state)?;
+
+    let attestation = build_draw_attestation(
+        &state.signer,
+        state.oracle_address,
+        req.wager_id,
+        chain_id,
+    )
+    .await
+    .map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("failed to sign attestation: {e}"),
+        )
+    })?;
+
+    Ok(Json(DrawAttestationResponse {
+        oracle: attestation.oracle,
+        data: attestation.data,
         game_id: game.id,
         raw_status: game.status,
     }))

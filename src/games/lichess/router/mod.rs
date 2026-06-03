@@ -14,6 +14,10 @@ pub fn lichess_router() -> Router<Arc<AppState>> {
         post(handler::binary_attestation),
     );
     let r = r.route(
+        "/attestations/draw",
+        post(handler::draw_attestation),
+    );
+    let r = r.route(
         "/attestations/competition",
         post(handler::competition_attestation),
     );
