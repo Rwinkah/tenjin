@@ -49,7 +49,9 @@ NEXT_PUBLIC_TENJIN_URI=http://127.0.0.1:3001
 |--------|------|-------------|
 | GET | `/` | Service health (signer + chain id) |
 | GET | `/health` | Lichess module health |
-| POST | `/attestations/binary` | Sign a 1v1 wager outcome |
+| POST | `/attestations/binary` | Sign a 1v1 decisive outcome |
+| POST | `/attestations/draw` | Sign a 1v1 draw (refund both stakes) |
+| POST | `/attestations/void` | Sign a 1v1 void (no valid win/loss/draw) |
 | POST | `/attestations/competition` | Sign a ranked multi-player outcome |
 
 ### Binary attestation request
@@ -62,6 +64,19 @@ NEXT_PUBLIC_TENJIN_URI=http://127.0.0.1:3001
   "black_address": "0x..."
 }
 ```
+
+### Draw / void attestation request
+
+Same shape for draw and void (oracle fetches the Lichess game and classifies the result):
+
+```json
+{
+  "wager_id": "0xabcd...",
+  "game_id": "abc12345"
+}
+```
+
+Response: `{ "oracle", "data", "game_id", "raw_status" }`. Pass into `lcSettleDraw` or `lcSettleVoid` respectively.
 
 ### Competition attestation request
 

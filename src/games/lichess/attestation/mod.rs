@@ -4,6 +4,8 @@
 //! Matches `LichessOracle.sol`:
 //! - EIP-712 domain: `LichessOracle` / `1` / chainId / verifyingContract
 //! - Binary struct: `BinaryOutcome(bytes32 wagerId,address winner,address loser,uint256 deadline)`
+//! - Draw struct: `DrawOutcome(bytes32 wagerId,uint256 deadline)`
+//! - Void struct: `VoidOutcome(bytes32 wagerId,uint256 deadline)`
 //! - Competition struct: `CompetitionOutcome(bytes32 wagerId,bytes32 placementsHash,uint256 deadline)`
 //! - `OracleAttestation.data` is `abi.encode(uint256 deadline, bytes signature)`
 
@@ -26,6 +28,11 @@ sol! {
     }
 
     struct DrawOutcome {
+        bytes32 wagerId;
+        uint256 deadline;
+    }
+
+    struct VoidOutcome {
         bytes32 wagerId;
         uint256 deadline;
     }
@@ -129,6 +136,27 @@ pub async fn build_draw_attestation(
     Ok(OracleAttestation { oracle, data })
 }
 
+/// Builds the on-chain attestation for a binary (1v1) **void** settlement (`lcSettleVoid`).
+pub async fn build_void_attestation(
+    signer: &PrivateKeySigner,
+    oracle: Address,
+    wager_id: B256,
+    chain_id: u64,
+) -> Result<OracleAttestation, alloy::signers::Error> {
+    let deadline = attestation_deadline();
+    let domain = lichess_oracle_domain(chain_id, oracle);
+    let message = VoidOutcome {
+        wagerId: wager_id,
+        deadline,
+    };
+
+    let signing_hash = message.eip712_signing_hash(&domain);
+    let signature = signer.sign_hash(&signing_hash).await?;
+    let data = encode_attestation_data(deadline, signature);
+
+    Ok(OracleAttestation { oracle, data })
+}
+
 /// `keccak256(abi.encode(RankedPlacement[]))` — must match `LichessOracle.hashPlacements`.
 pub fn hash_placements(placements: &[RankedPlacement]) -> B256 {
     keccak256(placements.abi_encode())
@@ -218,6 +246,42 @@ mod tests {
                 0x23, 0x8a, 0x1d, 0x50, 0xc4, 0x1d,
             ])
         );
+    }
+
+    #[tokio::test]
+    async fn void_attestation_data_is_deadline_and_signature() {
+        let signer = test_signer(31337);
+        let oracle = address!("0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512");
+        let wager_id = B256::from([0xef; 32]);
+
+        let attestation = build_void_attestation(&signer, oracle, wager_id, 31337)
+            .await
+            .unwrap();
+
+        assert_eq!(attestation.oracle, oracle);
+        assert!(attestation.data.len() >= 96);
+    }
+
+    #[tokio::test]
+    async fn void_and_draw_outcomes_use_different_type_hashes() {
+        let oracle = address!("0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512");
+        let wager_id = B256::from([0x11; 32]);
+        let chain_id = 31337;
+        let deadline = U256::from(1_700_000_000u64);
+        let domain = lichess_oracle_domain(chain_id, oracle);
+
+        let draw_hash = DrawOutcome {
+            wagerId: wager_id,
+            deadline,
+        }
+        .eip712_signing_hash(&domain);
+        let void_hash = VoidOutcome {
+            wagerId: wager_id,
+            deadline,
+        }
+        .eip712_signing_hash(&domain);
+
+        assert_ne!(draw_hash, void_hash);
     }
 
     #[tokio::test]

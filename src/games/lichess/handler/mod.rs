@@ -8,8 +8,10 @@ use reqwest::header::ACCEPT;
 use serde::{Deserialize, Serialize};
 
 use crate::games::lichess::attestation::{
-    build_binary_attestation, build_competition_attestation, build_draw_attestation, RankedPlacement,
+    build_binary_attestation, build_competition_attestation, build_draw_attestation,
+    build_void_attestation, RankedPlacement,
 };
+use crate::games::lichess::settlement::check_void_eligible;
 use crate::games::lichess::models::{LichessColor, LichessGameExport, LichessStatus};
 use crate::shared::models::AppState;
 
@@ -186,6 +188,59 @@ pub async fn draw_attestation(
     })?;
 
     Ok(Json(DrawAttestationResponse {
+        oracle: attestation.oracle,
+        data: attestation.data,
+        game_id: game.id,
+        raw_status: game.status,
+    }))
+}
+
+// ---------- Void (1v1) attestation ----------
+
+#[derive(Debug, Deserialize)]
+pub struct VoidAttestationRequest {
+    pub wager_id: B256,
+    pub game_id: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct VoidAttestationResponse {
+    pub oracle: Address,
+    pub data: Bytes,
+    pub game_id: String,
+    pub raw_status: LichessStatus,
+}
+
+/// `POST /attestations/void`
+///
+/// Fetches the Lichess game, requires a void result, then returns a signed attestation for `lcSettleVoid`.
+pub async fn void_attestation(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<VoidAttestationRequest>,
+) -> Result<Json<VoidAttestationResponse>, (StatusCode, String)> {
+    validate_game_id(&req.game_id)?;
+
+    let game = fetch_lichess_game(&state, &req.game_id).await?;
+
+    check_void_eligible(&game)?;
+
+    let chain_id = signer_chain_id(&state)?;
+
+    let attestation = build_void_attestation(
+        &state.signer,
+        state.oracle_address,
+        req.wager_id,
+        chain_id,
+    )
+    .await
+    .map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("failed to sign attestation: {e}"),
+        )
+    })?;
+
+    Ok(Json(VoidAttestationResponse {
         oracle: attestation.oracle,
         data: attestation.data,
         game_id: game.id,
