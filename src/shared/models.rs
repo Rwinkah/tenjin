@@ -10,6 +10,12 @@ pub struct AppState {
     /// The wager contract requires `attestation.oracle == oracle_address` and
     /// `isOracleContract[oracle_address] == true`.
     pub oracle_address: Address,
+    /// JSON-RPC URL for on-chain join validation (optional in dev; required for binary join).
+    pub eth_rpc_url: Option<String>,
+    /// Deployed `LichessContract` address (same as wager-backend).
+    pub lichess_contract_address: Option<Address>,
+    /// Optional Lichess OAuth token for challenge destination verification on directed joins.
+    pub lichess_api_token: Option<String>,
 }
 
 impl AppState {
@@ -47,10 +53,32 @@ impl AppState {
             .build()
             .expect("failed to build reqwest::Client");
 
+        let eth_rpc_url = std::env::var("ETH_RPC_URL")
+            .ok()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty());
+
+        let lichess_contract_raw = std::env::var("LICHESS_CONTRACT_ADDRESS").ok();
+        let lichess_contract_address = lichess_contract_raw
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(|s| s.parse::<Address>())
+            .transpose()
+            .expect("LICHESS_CONTRACT_ADDRESS must be a 0x-prefixed 20-byte address when set");
+
+        let lichess_api_token = std::env::var("LICHESS_API_TOKEN")
+            .ok()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty());
+
         Self {
             signer,
             http,
             oracle_address,
+            eth_rpc_url,
+            lichess_contract_address,
+            lichess_api_token,
         }
     }
 }

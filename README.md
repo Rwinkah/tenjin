@@ -54,6 +54,36 @@ NEXT_PUBLIC_TENJIN_URI=http://127.0.0.1:3001
 | POST | `/attestations/void` | Sign a 1v1 void (no valid win/loss/draw) |
 | POST | `/attestations/competition` | Sign a ranked multi-player outcome |
 
+| POST | `/attestations/join` | Sign a join permit (`kind`: `binary` \| `competition`) for `lcJoinWithPermit` |
+| POST | `/attestations/competition-join` | Deprecated alias for `kind: competition` |
+
+### Join attestation request
+
+```json
+{
+  "kind": "binary",
+  "wager_id": "0xabcd...",
+  "joiner": "0x...",
+  "game_id": "{\"v\":1,\"open\":false,\"opponent\":\"alice\",...}",
+  "joiner_lichess_username": "alice",
+  "challenge_id": "AbCdEfGh"
+}
+```
+
+Competition joins omit `game_id`, `joiner_lichess_username`, and `challenge_id`:
+
+```json
+{
+  "kind": "competition",
+  "wager_id": "0xabcd...",
+  "joiner": "0x..."
+}
+```
+
+Response: `{ "oracle", "deadline", "signature" }`.
+
+Requires `ETH_RPC_URL` and `LICHESS_CONTRACT_ADDRESS` for on-chain join validation.
+
 ### Binary attestation request
 
 ```json

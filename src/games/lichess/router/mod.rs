@@ -25,6 +25,22 @@ pub fn lichess_router() -> Router<Arc<AppState>> {
         "/attestations/competition",
         post(handler::competition_attestation),
     );
+    let r = r.route(
+        "/attestations/competition/prepare-settle",
+        post(handler::competition_prepare_settle),
+    );
+    let r = r.route(
+        "/attestations/join",
+        post(handler::join_attestation),
+    );
+    let r = r.route(
+        "/attestations/competition-join",
+        post(handler::competition_join_attestation),
+    );
+    let r = r.route(
+        "/attestations/competition-void",
+        post(handler::competition_void_attestation),
+    );
     r
 }
 

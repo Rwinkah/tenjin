@@ -8,10 +8,15 @@ use reqwest::header::ACCEPT;
 use serde::{Deserialize, Serialize};
 
 use crate::games::lichess::attestation::{
-    build_binary_attestation, build_competition_attestation, build_draw_attestation,
-    build_void_attestation, RankedPlacement,
+    build_binary_attestation, build_competition_attestation, build_competition_join_permit,
+    build_competition_void_attestation, build_draw_attestation, build_void_attestation,
+    RankedPlacement,
 };
-use crate::games::lichess::settlement::check_void_eligible;
+use crate::games::lichess::join::{self, JoinKind};
+use crate::games::lichess::settlement::{
+    check_competition_void_eligible, check_void_eligible, prepare_competition_settle,
+    CompetitionSettlementOption,
+};
 use crate::games::lichess::models::{LichessColor, LichessGameExport, LichessStatus};
 use crate::shared::models::AppState;
 
@@ -311,6 +316,263 @@ pub async fn competition_attestation(
         oracle: attestation.oracle,
         data: attestation.data,
         placements: req.placements,
+    }))
+}
+
+// ---------- Competition prepare-settle ----------
+
+#[derive(Debug, Deserialize)]
+pub struct CompetitionPrepareSettleRequest {
+    pub participants_count: u64,
+    pub min_joiners_to_settle: u64,
+}
+
+#[derive(Debug, Serialize)]
+pub struct CompetitionPrepareSettleResponse {
+    pub options: Vec<String>,
+    pub recommended: Option<String>,
+    pub ranked_eligible: bool,
+    pub void_eligible: bool,
+    pub reason: Option<String>,
+}
+
+fn settlement_option_label(option: CompetitionSettlementOption) -> &'static str {
+    match option {
+        CompetitionSettlementOption::Ranked => "ranked",
+        CompetitionSettlementOption::Void => "void",
+    }
+}
+
+/// `POST /attestations/competition/prepare-settle`
+///
+/// Returns which settlement paths Tenjin will attest for the given on-chain join counts.
+pub async fn competition_prepare_settle(
+    Json(req): Json<CompetitionPrepareSettleRequest>,
+) -> Result<Json<CompetitionPrepareSettleResponse>, (StatusCode, String)> {
+    if req.min_joiners_to_settle == 0 {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "min_joiners_to_settle must be greater than zero".into(),
+        ));
+    }
+
+    let prep = prepare_competition_settle(req.participants_count, req.min_joiners_to_settle);
+    let mut options = Vec::new();
+    if prep.void_eligible {
+        options.push(settlement_option_label(CompetitionSettlementOption::Void).into());
+    }
+    if prep.ranked_eligible {
+        options.push(settlement_option_label(CompetitionSettlementOption::Ranked).into());
+    }
+
+    Ok(Json(CompetitionPrepareSettleResponse {
+        options,
+        recommended: prep.recommended.map(|option| settlement_option_label(option).into()),
+        ranked_eligible: prep.ranked_eligible,
+        void_eligible: prep.void_eligible,
+        reason: prep.reason,
+    }))
+}
+
+// ---------- Competition void attestation ----------
+
+#[derive(Debug, Deserialize)]
+pub struct CompetitionVoidAttestationRequest {
+    pub wager_id: B256,
+    pub participants_count: u64,
+    pub min_joiners_to_settle: u64,
+}
+
+#[derive(Debug, Serialize)]
+pub struct CompetitionVoidAttestationResponse {
+    pub oracle: Address,
+    pub data: Bytes,
+    pub settlement: String,
+    pub reason: Option<String>,
+}
+
+/// `POST /attestations/competition-void`
+///
+/// Signs a multi-party void attestation for `lcVoidCompetition` when joiners are below the minimum.
+pub async fn competition_void_attestation(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<CompetitionVoidAttestationRequest>,
+) -> Result<Json<CompetitionVoidAttestationResponse>, (StatusCode, String)> {
+    check_competition_void_eligible(req.participants_count, req.min_joiners_to_settle)?;
+
+    let prep = prepare_competition_settle(req.participants_count, req.min_joiners_to_settle);
+    let chain_id = signer_chain_id(&state)?;
+
+    let attestation = build_competition_void_attestation(
+        &state.signer,
+        state.oracle_address,
+        req.wager_id,
+        chain_id,
+    )
+    .await
+    .map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("failed to sign attestation: {e}"),
+        )
+    })?;
+
+    Ok(Json(CompetitionVoidAttestationResponse {
+        oracle: attestation.oracle,
+        data: attestation.data,
+        settlement: settlement_option_label(CompetitionSettlementOption::Void).into(),
+        reason: prep.reason,
+    }))
+}
+
+// ---------- Unified join permit ----------
+
+#[derive(Debug, Deserialize)]
+pub struct JoinAttestationRequest {
+    pub kind: String,
+    pub wager_id: B256,
+    pub joiner: Address,
+    /// Exact `gameId` string from `WagerCreated` (required for `binary`).
+    #[serde(default)]
+    pub game_id: Option<String>,
+    #[serde(default)]
+    pub joiner_lichess_username: Option<String>,
+    #[serde(default)]
+    pub challenge_id: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct JoinAttestationResponse {
+    pub oracle: Address,
+    pub deadline: U256,
+    /// Raw EIP-712 signature for `lcJoinWithPermit` (not `OracleAttestation.data`).
+    pub signature: String,
+}
+
+async fn sign_join_permit(
+    state: &AppState,
+    wager_id: B256,
+    joiner: Address,
+) -> Result<JoinAttestationResponse, (StatusCode, String)> {
+    let chain_id = signer_chain_id(state)?;
+
+    let permit = build_competition_join_permit(
+        &state.signer,
+        state.oracle_address,
+        wager_id,
+        joiner,
+        chain_id,
+    )
+    .await
+    .map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("failed to sign join permit: {e}"),
+        )
+    })?;
+
+    Ok(JoinAttestationResponse {
+        oracle: permit.oracle,
+        deadline: permit.deadline,
+        signature: permit.signature.to_string(),
+    })
+}
+
+async fn issue_join_permit(
+    state: &AppState,
+    kind: JoinKind,
+    wager_id: B256,
+    joiner: Address,
+    game_id: Option<&str>,
+    joiner_lichess_username: Option<&str>,
+    challenge_id: Option<&str>,
+) -> Result<JoinAttestationResponse, (StatusCode, String)> {
+    if joiner.is_zero() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "joiner must not be the zero address".into(),
+        ));
+    }
+
+    match kind {
+        JoinKind::Binary => {
+            let game_id = game_id.unwrap_or("").trim();
+            let joiner_username = joiner_lichess_username.unwrap_or("").trim();
+            join::validate_binary_join(state, wager_id, game_id, joiner_username, challenge_id)
+                .await
+                .map_err(|reason| (StatusCode::FORBIDDEN, reason))?;
+        }
+        JoinKind::Competition => {
+            join::validate_competition_join(state, wager_id)
+                .await
+                .map_err(|reason| (StatusCode::FORBIDDEN, reason))?;
+        }
+    }
+
+    sign_join_permit(state, wager_id, joiner).await
+}
+
+/// `POST /attestations/join`
+///
+/// Validates join eligibility by `kind`, then signs `CompetitionJoin` for `lcJoinWithPermit`.
+pub async fn join_attestation(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<JoinAttestationRequest>,
+) -> Result<Json<JoinAttestationResponse>, (StatusCode, String)> {
+    let kind = JoinKind::parse(&req.kind).map_err(|reason| (StatusCode::BAD_REQUEST, reason))?;
+
+    let response = issue_join_permit(
+        &state,
+        kind,
+        req.wager_id,
+        req.joiner,
+        req.game_id.as_deref(),
+        req.joiner_lichess_username.as_deref(),
+        req.challenge_id.as_deref(),
+    )
+    .await?;
+
+    Ok(Json(response))
+}
+
+// ---------- Competition join permit (legacy) ----------
+
+#[derive(Debug, Deserialize)]
+pub struct CompetitionJoinAttestationRequest {
+    pub wager_id: B256,
+    pub joiner: Address,
+}
+
+#[derive(Debug, Serialize)]
+pub struct CompetitionJoinAttestationResponse {
+    pub oracle: Address,
+    pub deadline: U256,
+    /// Raw EIP-712 signature for `lcJoinWithPermit` (not `OracleAttestation.data`).
+    pub signature: String,
+}
+
+/// `POST /attestations/competition-join`
+///
+/// Deprecated — use `POST /attestations/join` with `"kind": "competition"`.
+pub async fn competition_join_attestation(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<CompetitionJoinAttestationRequest>,
+) -> Result<Json<CompetitionJoinAttestationResponse>, (StatusCode, String)> {
+    let unified = issue_join_permit(
+        &state,
+        JoinKind::Competition,
+        req.wager_id,
+        req.joiner,
+        None,
+        None,
+        None,
+    )
+    .await?;
+
+    Ok(Json(CompetitionJoinAttestationResponse {
+        oracle: unified.oracle,
+        deadline: unified.deadline,
+        signature: unified.signature,
     }))
 }
 
