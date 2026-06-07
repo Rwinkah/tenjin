@@ -12,6 +12,7 @@ use crate::games::lichess::attestation::{
     build_competition_leave_permit, build_competition_void_attestation, build_draw_attestation,
     build_void_attestation, RankedPlacement,
 };
+use crate::games::lichess::competition_settlement::{self, PlacementEntry, RosterEntry};
 use crate::games::lichess::join::{self, JoinKind};
 use crate::games::lichess::settlement::{
     check_competition_void_eligible, check_void_eligible, prepare_competition_settle,
@@ -262,11 +263,19 @@ pub struct RankedPlacementInput {
     pub player: Address,
 }
 
+#[derive(Debug, Deserialize, Serialize, Clone)]
+pub struct RosterEntryInput {
+    pub wallet: Address,
+    pub lichess_username: String,
+}
+
 #[derive(Debug, Deserialize)]
 pub struct CompetitionAttestationRequest {
     pub wager_id: B256,
+    pub lichess_event_id: Option<String>,
     /// Ranked placements — order must match the array passed to `lcSettleCompetition`.
     pub placements: Vec<RankedPlacementInput>,
+    pub roster: Option<Vec<RosterEntryInput>>,
 }
 
 #[derive(Debug, Serialize)]
@@ -278,13 +287,64 @@ pub struct CompetitionAttestationResponse {
 
 /// `POST /attestations/competition`
 ///
-/// Signs a ranked placement attestation. Each entry is a `{rank, player}` pair
-/// matching `RankedPlacement` on `LichessOracle`.
+/// Signs a ranked placement attestation verified against Lichess arena results.
 pub async fn competition_attestation(
     State(state): State<Arc<AppState>>,
     Json(req): Json<CompetitionAttestationRequest>,
 ) -> Result<Json<CompetitionAttestationResponse>, (StatusCode, String)> {
     validate_placements(&req.placements)?;
+
+    let lichess_event_id = req
+        .lichess_event_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| {
+            (
+                StatusCode::BAD_REQUEST,
+                "lichess_event_id is required for verified competition settlement".into(),
+            )
+        })?;
+
+    let roster_inputs = req.roster.as_deref().ok_or_else(|| {
+        (
+            StatusCode::BAD_REQUEST,
+            "roster is required for verified competition settlement".into(),
+        )
+    })?;
+
+    if roster_inputs.is_empty() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "roster must not be empty".into(),
+        ));
+    }
+
+    let placement_entries: Vec<PlacementEntry> = req
+        .placements
+        .iter()
+        .map(|entry| PlacementEntry {
+            rank: entry.rank,
+            player: entry.player,
+        })
+        .collect();
+
+    let roster_entries: Vec<RosterEntry> = roster_inputs
+        .iter()
+        .map(|entry| RosterEntry {
+            wallet: entry.wallet,
+            lichess_username: entry.lichess_username.clone(),
+        })
+        .collect();
+
+    competition_settlement::validate_competition_placements(
+        &state,
+        lichess_event_id,
+        &placement_entries,
+        &roster_entries,
+    )
+    .await
+    .map_err(|reason| (StatusCode::FORBIDDEN, reason))?;
 
     let placements: Vec<RankedPlacement> = req
         .placements
