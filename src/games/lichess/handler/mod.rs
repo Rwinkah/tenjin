@@ -9,8 +9,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::games::lichess::attestation::{
     build_binary_attestation, build_competition_attestation, build_competition_join_permit,
-    build_competition_void_attestation, build_draw_attestation, build_void_attestation,
-    RankedPlacement,
+    build_competition_leave_permit, build_competition_void_attestation, build_draw_attestation,
+    build_void_attestation, RankedPlacement,
 };
 use crate::games::lichess::join::{self, JoinKind};
 use crate::games::lichess::settlement::{
@@ -574,6 +574,64 @@ pub async fn competition_join_attestation(
         deadline: unified.deadline,
         signature: unified.signature,
     }))
+}
+
+// ---------- Competition leave permit ----------
+
+#[derive(Debug, Deserialize)]
+pub struct LeaveAttestationRequest {
+    pub wager_id: B256,
+    pub leaver: Address,
+}
+
+async fn sign_leave_permit(
+    state: &AppState,
+    wager_id: B256,
+    leaver: Address,
+) -> Result<JoinAttestationResponse, (StatusCode, String)> {
+    let chain_id = signer_chain_id(state)?;
+
+    let permit = build_competition_leave_permit(
+        &state.signer,
+        state.oracle_address,
+        wager_id,
+        leaver,
+        chain_id,
+    )
+    .await
+    .map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("failed to sign leave permit: {e}"),
+        )
+    })?;
+
+    Ok(JoinAttestationResponse {
+        oracle: permit.oracle,
+        deadline: permit.deadline,
+        signature: permit.signature.to_string(),
+    })
+}
+
+/// `POST /attestations/leave`
+///
+/// Validates on-chain leave eligibility, then signs `CompetitionLeave` for `lcLeaveCompetitionWithPermit`.
+pub async fn leave_attestation(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<LeaveAttestationRequest>,
+) -> Result<Json<JoinAttestationResponse>, (StatusCode, String)> {
+    if req.leaver.is_zero() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "leaver must not be the zero address".into(),
+        ));
+    }
+
+    join::validate_competition_leave(&state, req.wager_id, req.leaver)
+        .await
+        .map_err(|reason| (StatusCode::FORBIDDEN, reason))?;
+
+    sign_leave_permit(&state, req.wager_id, req.leaver).await.map(Json)
 }
 
 // ---------- helpers ----------

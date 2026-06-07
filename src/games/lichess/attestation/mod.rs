@@ -9,6 +9,7 @@
 //! - Competition struct: `CompetitionOutcome(bytes32 wagerId,bytes32 placementsHash,uint256 deadline)`
 //! - Competition void struct: `CompetitionVoidOutcome(bytes32 wagerId,uint256 deadline)`
 //! - Competition join struct: `CompetitionJoin(bytes32 wagerId,address joiner,uint256 deadline)`
+//! - Competition leave struct: `CompetitionLeave(bytes32 wagerId,address leaver,uint256 deadline)`
 //! - `OracleAttestation.data` is `abi.encode(uint256 deadline, bytes signature)`
 
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -57,6 +58,12 @@ sol! {
         uint256 deadline;
     }
 
+    struct CompetitionLeave {
+        bytes32 wagerId;
+        address leaver;
+        uint256 deadline;
+    }
+
     /// Matches `IWagerOracle.RankedPlacement`.
     struct RankedPlacement {
         uint256 rank;
@@ -87,6 +94,9 @@ pub struct CompetitionJoinPermit {
     pub deadline: U256,
     pub signature: alloy::primitives::Signature,
 }
+
+/// Signed permit for `LichessContract.lcLeaveCompetitionWithPermit` (same wire shape as join).
+pub type CompetitionLeavePermit = CompetitionJoinPermit;
 
 fn attestation_deadline() -> U256 {
     let now = SystemTime::now()
@@ -264,6 +274,32 @@ pub async fn build_competition_join_permit(
     })
 }
 
+/// Builds the EIP-712 leave permit for `LichessContract.lcLeaveCompetitionWithPermit`.
+pub async fn build_competition_leave_permit(
+    signer: &PrivateKeySigner,
+    oracle: Address,
+    wager_id: B256,
+    leaver: Address,
+    chain_id: u64,
+) -> Result<CompetitionLeavePermit, alloy::signers::Error> {
+    let deadline = join_permit_deadline();
+    let domain = lichess_oracle_domain(chain_id, oracle);
+    let message = CompetitionLeave {
+        wagerId: wager_id,
+        leaver,
+        deadline,
+    };
+
+    let signing_hash = message.eip712_signing_hash(&domain);
+    let signature = signer.sign_hash(&signing_hash).await?;
+
+    Ok(CompetitionLeavePermit {
+        oracle,
+        deadline,
+        signature,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -388,6 +424,22 @@ mod tests {
         let joiner = address!("0x90F79bf6EB2c4f870365E785982E1f101E93b906");
 
         let permit = build_competition_join_permit(&signer, oracle, wager_id, joiner, 31337)
+            .await
+            .unwrap();
+
+        assert_eq!(permit.oracle, oracle);
+        assert!(permit.deadline > U256::from(1_000_000_000u64));
+        assert_eq!(permit.signature.as_bytes().len(), 65);
+    }
+
+    #[tokio::test]
+    async fn competition_leave_permit_is_raw_signature() {
+        let signer = test_signer(31337);
+        let oracle = address!("0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512");
+        let wager_id = B256::from([0x43; 32]);
+        let leaver = address!("0x90F79bf6EB2c4f870365E785982E1f101E93b906");
+
+        let permit = build_competition_leave_permit(&signer, oracle, wager_id, leaver, 31337)
             .await
             .unwrap();
 

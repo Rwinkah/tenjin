@@ -38,6 +38,10 @@ pub fn lichess_router() -> Router<Arc<AppState>> {
         post(handler::competition_join_attestation),
     );
     let r = r.route(
+        "/attestations/leave",
+        post(handler::leave_attestation),
+    );
+    let r = r.route(
         "/attestations/competition-void",
         post(handler::competition_void_attestation),
     );

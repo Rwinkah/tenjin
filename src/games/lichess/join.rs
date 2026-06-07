@@ -34,6 +34,11 @@ sol! {
                 uint256 expiresAt,
                 bytes32 gameIdKey
             );
+
+        function lcWagerLeaveSnapshot(bytes32 wagerId, address leaver)
+            external
+            view
+            returns (bool exists, bool canLeave);
     }
 }
 
@@ -257,6 +262,63 @@ pub async fn validate_competition_join(state: &AppState, wager_id: B256) -> Resu
     validate_competition_joinable_snapshot(&snapshot)
 }
 
+#[derive(Debug)]
+pub struct OnChainLeaveSnapshot {
+    pub exists: bool,
+    pub can_leave: bool,
+}
+
+pub async fn fetch_on_chain_leave_snapshot(
+    state: &AppState,
+    wager_id: B256,
+    leaver: Address,
+) -> Result<OnChainLeaveSnapshot, String> {
+    let rpc_url = state
+        .eth_rpc_url
+        .as_deref()
+        .ok_or_else(|| "ETH_RPC_URL is not configured".to_string())?;
+    let contract = state
+        .lichess_contract_address
+        .ok_or_else(|| "LICHESS_CONTRACT_ADDRESS is not configured".to_string())?;
+
+    let provider = ProviderBuilder::new().connect(rpc_url).await.map_err(|e| {
+        format!("failed to connect RPC for leave validation: {e}")
+    })?;
+    let reader = LichessContractReader::new(contract, provider);
+    let snapshot = reader
+        .lcWagerLeaveSnapshot(wager_id, leaver)
+        .call()
+        .await
+        .map_err(|e| format!("lcWagerLeaveSnapshot call failed: {e}"))?;
+
+    Ok(OnChainLeaveSnapshot {
+        exists: snapshot.exists,
+        can_leave: snapshot.canLeave,
+    })
+}
+
+pub fn validate_competition_leave_snapshot(snapshot: &OnChainLeaveSnapshot) -> Result<(), String> {
+    if !snapshot.exists {
+        return Err("wager does not exist on-chain".into());
+    }
+    if !snapshot.can_leave {
+        return Err("wager is not open for leaving".into());
+    }
+    Ok(())
+}
+
+pub async fn validate_competition_leave(
+    state: &AppState,
+    wager_id: B256,
+    leaver: Address,
+) -> Result<(), String> {
+    if leaver.is_zero() {
+        return Err("leaver must not be the zero address".into());
+    }
+    let snapshot = fetch_on_chain_leave_snapshot(state, wager_id, leaver).await?;
+    validate_competition_leave_snapshot(&snapshot)
+}
+
 async fn validate_challenge_destination(
     state: &AppState,
     challenge_id: &str,
@@ -424,6 +486,30 @@ mod tests {
         assert_eq!(
             validate_binary_joinable_snapshot(&snap).unwrap_err(),
             "wager already has a joiner"
+        );
+    }
+
+    #[test]
+    fn leave_rejects_when_not_eligible() {
+        let snap = OnChainLeaveSnapshot {
+            exists: true,
+            can_leave: false,
+        };
+        assert_eq!(
+            validate_competition_leave_snapshot(&snap).unwrap_err(),
+            "wager is not open for leaving"
+        );
+    }
+
+    #[test]
+    fn leave_rejects_missing_wager() {
+        let snap = OnChainLeaveSnapshot {
+            exists: false,
+            can_leave: false,
+        };
+        assert_eq!(
+            validate_competition_leave_snapshot(&snap).unwrap_err(),
+            "wager does not exist on-chain"
         );
     }
 }
