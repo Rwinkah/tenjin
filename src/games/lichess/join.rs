@@ -13,6 +13,10 @@ use crate::shared::models::AppState;
 
 const LICHESS_API_BASE: &str = "https://lichess.org";
 const WG_FLAG_CREATED: u8 = 0;
+const WG_FLAG_ACCEPTED: u8 = 1;
+const WG_FLAG_CANCELLED: u8 = 2;
+const WG_FLAG_EXPIRED: u8 = 3;
+const WG_FLAG_COMPLETED: u8 = 4;
 const WAGER_FORMAT_BINARY: u8 = 0;
 const WAGER_FORMAT_MULTI_PARTY: u8 = 1;
 
@@ -147,7 +151,7 @@ fn now_unix() -> u64 {
         .as_secs()
 }
 
-pub fn validate_joinable_snapshot(snapshot: &OnChainJoinSnapshot, expected_format: u8) -> Result<(), String> {
+fn validate_snapshot_base(snapshot: &OnChainJoinSnapshot, expected_format: u8) -> Result<(), String> {
     if !snapshot.exists {
         return Err("wager does not exist on-chain".into());
     }
@@ -157,6 +161,20 @@ pub fn validate_joinable_snapshot(snapshot: &OnChainJoinSnapshot, expected_forma
             snapshot.format
         ));
     }
+    Ok(())
+}
+
+fn validate_join_window_open(snapshot: &OnChainJoinSnapshot) -> Result<(), String> {
+    let now = U256::from(now_unix());
+    if snapshot.expires_at <= now {
+        return Err("wager join window has expired".into());
+    }
+    Ok(())
+}
+
+/// Binary (1v1): exactly one joiner; status must stay `CREATED` until that join.
+pub fn validate_binary_joinable_snapshot(snapshot: &OnChainJoinSnapshot) -> Result<(), String> {
+    validate_snapshot_base(snapshot, WAGER_FORMAT_BINARY)?;
     if snapshot.status != WG_FLAG_CREATED {
         return Err(format!(
             "wager is not open for joining (status {})",
@@ -166,11 +184,28 @@ pub fn validate_joinable_snapshot(snapshot: &OnChainJoinSnapshot, expected_forma
     if !snapshot.participants_count.is_zero() {
         return Err("wager already has a joiner".into());
     }
-    let now = U256::from(now_unix());
-    if snapshot.expires_at <= now {
-        return Err("wager join window has expired".into());
+    validate_join_window_open(snapshot)
+}
+
+/// Multi-party competition: join while `CREATED` or `ACCEPTED` until expiry; capacity enforced on-chain.
+pub fn validate_competition_joinable_snapshot(snapshot: &OnChainJoinSnapshot) -> Result<(), String> {
+    validate_snapshot_base(snapshot, WAGER_FORMAT_MULTI_PARTY)?;
+    match snapshot.status {
+        WG_FLAG_CREATED | WG_FLAG_ACCEPTED => {}
+        WG_FLAG_CANCELLED | WG_FLAG_EXPIRED | WG_FLAG_COMPLETED => {
+            return Err(format!(
+                "wager is not open for joining (status {})",
+                snapshot.status
+            ));
+        }
+        other => {
+            return Err(format!(
+                "wager is not open for joining (status {})",
+                other
+            ));
+        }
     }
-    Ok(())
+    validate_join_window_open(snapshot)
 }
 
 pub async fn validate_binary_join(
@@ -195,7 +230,7 @@ pub async fn validate_binary_join(
     }
 
     let snapshot = fetch_on_chain_join_snapshot(state, wager_id).await?;
-    validate_joinable_snapshot(&snapshot, WAGER_FORMAT_BINARY)?;
+    validate_binary_joinable_snapshot(&snapshot)?;
 
     let expected_key = game_id_key(game_id);
     if snapshot.game_id_key != expected_key {
@@ -219,7 +254,7 @@ pub async fn validate_binary_join(
 
 pub async fn validate_competition_join(state: &AppState, wager_id: B256) -> Result<(), String> {
     let snapshot = fetch_on_chain_join_snapshot(state, wager_id).await?;
-    validate_joinable_snapshot(&snapshot, WAGER_FORMAT_MULTI_PARTY)
+    validate_competition_joinable_snapshot(&snapshot)
 }
 
 async fn validate_challenge_destination(
@@ -322,5 +357,73 @@ mod tests {
             opponent: None,
         };
         assert!(validate_binary_directed_opponent(&intent, "anyone").is_ok());
+    }
+
+    fn test_snapshot(
+        format: u8,
+        status: u8,
+        participants_count: u64,
+        expires_at: u64,
+    ) -> OnChainJoinSnapshot {
+        OnChainJoinSnapshot {
+            exists: true,
+            format,
+            status,
+            participants_count: U256::from(participants_count),
+            expires_at: U256::from(expires_at),
+            game_id_key: B256::ZERO,
+        }
+    }
+
+    #[test]
+    fn competition_allows_accepted_with_existing_joiners() {
+        let future = now_unix() + 3600;
+        let snap = test_snapshot(WAGER_FORMAT_MULTI_PARTY, WG_FLAG_ACCEPTED, 2, future);
+        assert!(validate_competition_joinable_snapshot(&snap).is_ok());
+    }
+
+    #[test]
+    fn competition_allows_created_with_no_joiners() {
+        let future = now_unix() + 3600;
+        let snap = test_snapshot(WAGER_FORMAT_MULTI_PARTY, WG_FLAG_CREATED, 0, future);
+        assert!(validate_competition_joinable_snapshot(&snap).is_ok());
+    }
+
+    #[test]
+    fn competition_rejects_expired_join_window() {
+        let past = now_unix().saturating_sub(60);
+        let snap = test_snapshot(WAGER_FORMAT_MULTI_PARTY, WG_FLAG_ACCEPTED, 1, past);
+        assert_eq!(
+            validate_competition_joinable_snapshot(&snap).unwrap_err(),
+            "wager join window has expired"
+        );
+    }
+
+    #[test]
+    fn competition_rejects_terminal_status() {
+        let future = now_unix() + 3600;
+        for status in [WG_FLAG_CANCELLED, WG_FLAG_EXPIRED, WG_FLAG_COMPLETED] {
+            let snap = test_snapshot(WAGER_FORMAT_MULTI_PARTY, status, 0, future);
+            let err = validate_competition_joinable_snapshot(&snap).unwrap_err();
+            assert!(err.contains("not open for joining"), "{err}");
+        }
+    }
+
+    #[test]
+    fn binary_rejects_accepted_status() {
+        let future = now_unix() + 3600;
+        let snap = test_snapshot(WAGER_FORMAT_BINARY, WG_FLAG_ACCEPTED, 1, future);
+        let err = validate_binary_joinable_snapshot(&snap).unwrap_err();
+        assert!(err.contains("not open for joining"), "{err}");
+    }
+
+    #[test]
+    fn binary_rejects_when_joiner_already_present() {
+        let future = now_unix() + 3600;
+        let snap = test_snapshot(WAGER_FORMAT_BINARY, WG_FLAG_CREATED, 1, future);
+        assert_eq!(
+            validate_binary_joinable_snapshot(&snap).unwrap_err(),
+            "wager already has a joiner"
+        );
     }
 }
