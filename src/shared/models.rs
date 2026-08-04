@@ -10,6 +10,10 @@ pub struct AppState {
     /// The wager contract requires `attestation.oracle == oracle_address` and
     /// `isOracleContract[oracle_address] == true`.
     pub oracle_address: Address,
+    /// Address of the deployed `FootballOracle` contract on `chain_id`.
+    pub football_oracle_address: Address,
+    /// football-data.org `X-Auth-Token` for fixture result verification.
+    pub football_data_api_token: Option<String>,
     /// JSON-RPC URL for on-chain join validation (optional in dev; required for binary join).
     pub eth_rpc_url: Option<String>,
     /// Deployed `LichessContract` address (same as wager-backend).
@@ -21,10 +25,12 @@ pub struct AppState {
 impl AppState {
     /// Builds state from environment:
     ///
-    /// - `PRIVATE_KEY` — 32-byte hex (with or without `0x`) for the oracle's `trustedSigner`.
-    /// - `CHAIN_ID`    — decimal u64 of the chain where `LichessOracle` lives.
-    /// - `LICHESS_ORACLE_ADDRESS` — 0x-prefixed `LichessOracle` contract (same as wager-backend / Render env group).
-    /// - `ORACLE_ADDRESS` — deprecated alias for `LICHESS_ORACLE_ADDRESS`.
+    /// - `PRIVATE_KEY` — attester key allowlisted on oracles
+    /// - `CHAIN_ID` — decimal u64
+    /// - `LICHESS_ORACLE_ADDRESS` / `ORACLE_ADDRESS` — LichessOracle
+    /// - `FOOTBALL_ORACLE_ADDRESS` — FootballOracle (optional; zero if unset)
+    /// - `FOOTBALL_DATA_API_TOKEN` (or legacy `API_FOOTBALL_KEY`) — football-data.org token
+    /// - `ETH_RPC_URL`, `LICHESS_CONTRACT_ADDRESS`, `LICHESS_API_TOKEN` — join validation
     pub fn from_env() -> Self {
         let pk = std::env::var("PRIVATE_KEY").expect("PRIVATE_KEY must be set");
         let pk = pk.trim();
@@ -47,6 +53,19 @@ impl AppState {
             .trim()
             .parse()
             .expect("LICHESS_ORACLE_ADDRESS must be a 0x-prefixed 20-byte address");
+
+        let football_oracle_address: Address = std::env::var("FOOTBALL_ORACLE_ADDRESS")
+            .ok()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .map(|s| s.parse().expect("FOOTBALL_ORACLE_ADDRESS must be a 0x address"))
+            .unwrap_or(Address::ZERO);
+
+        let football_data_api_token = std::env::var("FOOTBALL_DATA_API_TOKEN")
+            .or_else(|_| std::env::var("API_FOOTBALL_KEY"))
+            .ok()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty());
 
         let http = Client::builder()
             .user_agent(concat!("tenjin-oracle/", env!("CARGO_PKG_VERSION")))
@@ -76,6 +95,8 @@ impl AppState {
             signer,
             http,
             oracle_address,
+            football_oracle_address,
+            football_data_api_token,
             eth_rpc_url,
             lichess_contract_address,
             lichess_api_token,
