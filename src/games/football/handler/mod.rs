@@ -60,6 +60,9 @@ pub struct JoinPermitRequest {
     pub game_id: String,
     /// Joiner's pick; must conflict with creatorPick in game_id.
     pub joiner_pick: String,
+    /// Platform username (display_name) for directed wager checks.
+    #[serde(default)]
+    pub joiner_display_name: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -77,6 +80,8 @@ pub async fn join_attestation(
     let meta = FootballGameId::parse(&req.game_id).map_err(|e| (StatusCode::BAD_REQUEST, e))?;
     meta.ensure_conflicting_picks(&req.joiner_pick)
         .map_err(|e| (StatusCode::BAD_REQUEST, e))?;
+    meta.ensure_directed_joiner(req.joiner_display_name.as_deref())
+        .map_err(|e| (StatusCode::FORBIDDEN, e))?;
 
     // Soft check: fixture should still be pre-match when joining.
     let fixture = fetch_fixture(&state, meta.fixture_id).await?;

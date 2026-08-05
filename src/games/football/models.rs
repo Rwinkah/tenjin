@@ -27,12 +27,48 @@ pub struct FootballGameId {
     pub line: Option<f64>,
     pub creator_pick: String,
     pub joiner_pick: Option<String>,
+    /// Missing `open` treated as true (legacy open challenges).
+    #[serde(default = "default_open_true")]
+    pub open: bool,
+    /// Platform username (display_name), lowercased when directed.
+    #[serde(default)]
+    pub opponent: Option<String>,
     pub nonce: Option<String>,
+}
+
+fn default_open_true() -> bool {
+    true
 }
 
 impl FootballGameId {
     pub fn parse(raw: &str) -> Result<Self, String> {
         serde_json::from_str(raw).map_err(|e| format!("invalid football gameId JSON: {e}"))
+    }
+
+    pub fn ensure_directed_joiner(&self, joiner_display_name: Option<&str>) -> Result<(), String> {
+        if self.open {
+            return Ok(());
+        }
+        let expected = self
+            .opponent
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(|s| s.to_ascii_lowercase())
+            .ok_or_else(|| "directed wager missing opponent".to_string())?;
+        let actual = joiner_display_name
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(|s| s.to_ascii_lowercase())
+            .ok_or_else(|| {
+                "joiner has no username; set a display name before joining a directed wager".to_string()
+            })?;
+        if actual != expected {
+            return Err(format!(
+                "joiner username `{actual}` does not match directed opponent `{expected}`"
+            ));
+        }
+        Ok(())
     }
 
     pub fn opposite_pick(pick: &str) -> Option<&'static str> {
