@@ -14,6 +14,8 @@ pub struct AppState {
     pub football_oracle_address: Address,
     /// Address of the deployed `StravaOracle` contract on `chain_id`.
     pub strava_oracle_address: Address,
+    /// Address of the deployed `FplOracle` contract on `chain_id`.
+    pub fpl_oracle_address: Address,
     /// football-data.org `X-Auth-Token` for fixture result verification.
     pub football_data_api_token: Option<String>,
     /// JSON-RPC URL for on-chain join validation (optional in dev; required for binary join).
@@ -32,6 +34,7 @@ impl AppState {
     /// - `LICHESS_ORACLE_ADDRESS` / `ORACLE_ADDRESS` — LichessOracle
     /// - `FOOTBALL_ORACLE_ADDRESS` — FootballOracle (optional; zero if unset)
     /// - `STRAVA_ORACLE_ADDRESS` — StravaOracle (optional; zero if unset)
+    /// - `FPL_ORACLE_ADDRESS` — FplOracle (optional; zero if unset)
     /// - `FOOTBALL_DATA_API_TOKEN` (or legacy `API_FOOTBALL_KEY`) — football-data.org token
     /// - `ETH_RPC_URL`, `LICHESS_CONTRACT_ADDRESS`, `LICHESS_API_TOKEN` — join validation
     pub fn from_env() -> Self {
@@ -71,6 +74,13 @@ impl AppState {
             .map(|s| s.parse().expect("STRAVA_ORACLE_ADDRESS must be a 0x address"))
             .unwrap_or(Address::ZERO);
 
+        let fpl_oracle_address: Address = std::env::var("FPL_ORACLE_ADDRESS")
+            .ok()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .map(|s| s.parse().expect("FPL_ORACLE_ADDRESS must be a 0x address"))
+            .unwrap_or(Address::ZERO);
+
         let football_data_api_token = std::env::var("FOOTBALL_DATA_API_TOKEN")
             .or_else(|_| std::env::var("API_FOOTBALL_KEY"))
             .ok()
@@ -107,6 +117,7 @@ impl AppState {
             oracle_address,
             football_oracle_address,
             strava_oracle_address,
+            fpl_oracle_address,
             football_data_api_token,
             eth_rpc_url,
             lichess_contract_address,
