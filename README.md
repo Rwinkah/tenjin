@@ -1,13 +1,13 @@
 # Tenjin
 
-Oracle service that verifies Lichess game outcomes and signs settlement attestations for **WagerFI** on-chain wagers.
+Oracle service that verifies off-chain results and signs settlement attestations for **WagerFI** on-chain wagers.
 
 ## What it does
 
-1. Accepts a wager id, Lichess game id, and white/black wallet addresses.
-2. Fetches the finished game from Lichess.
-3. Maps the winner to the correct wallet.
-4. Returns a signed EIP-712 attestation for `LichessContract.lcSettle`.
+1. Accepts a wager id plus game-specific inputs (Lichess game, football fixture, or Strava outcome).
+2. Verifies the result from the source of truth where possible (Lichess API, football-data.org).
+3. Maps the winner to the correct wallet (or signs a Django-verified Strava outcome).
+4. Returns a signed EIP-712 attestation for the matching oracle contract.
 
 ## Stack
 
@@ -24,6 +24,8 @@ Copy `.env.example` to `.env` and set:
 | `PRIVATE_KEY` | Key for an address registered as `LichessOracle` attester |
 | `CHAIN_ID` | Chain id where the oracle contract lives (`31337` for local Hardhat) |
 | `LICHESS_ORACLE_ADDRESS` | Deployed `LichessOracle` contract address (same as wager-backend) |
+| `FOOTBALL_ORACLE_ADDRESS` | Deployed `FootballOracle` (optional) |
+| `STRAVA_ORACLE_ADDRESS` | Deployed `StravaOracle` (optional; required for `/strava/*`) |
 | `PORT` | HTTP port (default `3001`) |
 
 For local dev with wagerv2:
@@ -56,6 +58,11 @@ NEXT_PUBLIC_TENJIN_URI=http://127.0.0.1:3001
 
 | POST | `/attestations/join` | Sign a join permit (`kind`: `binary` \| `competition`) for `lcJoinWithPermit` |
 | POST | `/attestations/competition-join` | Deprecated alias for `kind: competition` |
+| GET | `/strava/health` | Strava module health |
+| POST | `/strava/attestations/join` | Sign a Strava join permit |
+| POST | `/strava/attestations/binary` | Sign a Strava 1v1 outcome |
+| POST | `/strava/attestations/draw` | Sign a Strava draw |
+| POST | `/strava/attestations/void` | Sign a Strava void |
 
 ### Join attestation request
 
@@ -123,6 +130,36 @@ Response: `{ "oracle", "data", "game_id", "raw_status" }`. Pass into `lcSettleDr
 Ranks are **1-based** and may be sparse (e.g. ranks 1 and 5). The array **order must match** exactly what you pass to `lcSettleCompetition` — reordering entries changes the hash and invalidates the attestation.
 
 Response includes `oracle`, `data`, and echo of `placements`.
+
+### Strava attestations
+
+Strava OAuth tokens live in wager-backend. Django fetches activities, applies the metric rules, then asks Tenjin to sign against `StravaOracle`.
+
+Join:
+
+```json
+{
+  "wager_id": "0xabcd...",
+  "joiner": "0x...",
+  "game_id": "{\"v\":1,\"open\":true,\"metric\":\"distance\",\"compare\":\"max\"}",
+  "chain_id": 77777
+}
+```
+
+Binary (winner/loser already decided by Django):
+
+```json
+{
+  "wager_id": "0xabcd...",
+  "winner": "0x...",
+  "loser": "0x...",
+  "creator_activity_id": "123",
+  "joiner_activity_id": "456",
+  "chain_id": 77777
+}
+```
+
+Join response: `{ "oracle", "deadline", "signature" }`. Settle response: `{ "oracle", "data", ... }` where `data` is `abi.encode(deadline, signature)`.
 
 ## Run
 

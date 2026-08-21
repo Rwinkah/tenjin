@@ -9,6 +9,7 @@ use tower_http::cors::{Any, CorsLayer};
 
 use games::football::router::football_router;
 use games::lichess::router::lichess_router;
+use games::strava::router::strava_router;
 use root::router::root_router;
 use shared::models::AppState;
 
@@ -41,6 +42,7 @@ async fn main() {
         .merge(root_router())
         .merge(lichess_router())
         .nest("/football", football_router())
+        .nest("/strava", strava_router())
         .layer(cors)
         .with_state(state);
 
