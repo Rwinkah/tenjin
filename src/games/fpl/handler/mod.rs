@@ -62,9 +62,15 @@ fn fpl_oracle(state: &AppState) -> Result<Address, (StatusCode, String)> {
 
 fn parse_iso_unix(raw: &str) -> Option<u64> {
     let s = raw.trim();
-    let s = s.strip_suffix('Z').unwrap_or(s);
-    let s = s.split(['+', '-']).next().unwrap_or(s);
-    let (date, time) = s.split_once('T')?;
+    let (date, time) = s.split_once('T').or_else(|| s.split_once(' '))?;
+    // Timezone is only on the time half (`Z`, `+00:00`, `-05:00`). Splitting the
+    // whole stamp on `-` used to turn `2026-09-04T17:30:00Z` into `"2026"`.
+    let time = time
+        .strip_suffix('Z')
+        .or_else(|| time.strip_suffix('z'))
+        .unwrap_or(time);
+    let time = time.split(['+', '-']).next().unwrap_or(time);
+    let time = time.split('.').next().unwrap_or(time);
     let mut d = date.split('-');
     let y: i64 = d.next()?.parse().ok()?;
     let m: i64 = d.next()?.parse().ok()?;
@@ -72,10 +78,7 @@ fn parse_iso_unix(raw: &str) -> Option<u64> {
     let mut t = time.split(':');
     let hh: u64 = t.next()?.parse().ok()?;
     let mm: u64 = t.next()?.parse().ok()?;
-    let ss: u64 = t
-        .next()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(0);
+    let ss: u64 = t.next().and_then(|v| v.parse().ok()).unwrap_or(0);
     Some(days_from_civil(y, m, day).saturating_mul(86400) + hh * 3600 + mm * 60 + ss)
 }
 
@@ -667,4 +670,20 @@ pub async fn competition_void_attestation(
         event,
         class: "void".into(),
     }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_iso_unix;
+
+    #[test]
+    fn parse_fpl_api_deadline_with_z() {
+        // 2026-09-04 17:30:00 UTC
+        assert_eq!(parse_iso_unix("2026-09-04T17:30:00Z"), Some(1_788_543_000));
+    }
+
+    #[test]
+    fn parse_fpl_api_deadline_with_offset() {
+        assert_eq!(parse_iso_unix("2026-09-04T17:30:00+00:00"), Some(1_788_543_000));
+    }
 }
