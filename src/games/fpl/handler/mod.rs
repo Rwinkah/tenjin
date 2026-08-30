@@ -8,7 +8,7 @@ use axum::Json;
 use serde::{Deserialize, Serialize};
 
 use crate::games::fpl::api::{
-    entry_in_classic_league, entry_in_h2h_league, event_deadline, event_is_data_checked,
+    entry_in_classic_league, entry_in_h2h_league, event_is_data_checked, event_is_finished,
     fetch_bootstrap, fetch_classic_standings, fetch_entry, fetch_gw_points, fetch_h2h_match,
 };
 use crate::games::fpl::attestation::{
@@ -60,58 +60,18 @@ fn fpl_oracle(state: &AppState) -> Result<Address, (StatusCode, String)> {
     Ok(state.fpl_oracle_address)
 }
 
-fn parse_iso_unix(raw: &str) -> Option<u64> {
-    let s = raw.trim();
-    let (date, time) = s.split_once('T').or_else(|| s.split_once(' '))?;
-    // Timezone is only on the time half (`Z`, `+00:00`, `-05:00`). Splitting the
-    // whole stamp on `-` used to turn `2026-09-04T17:30:00Z` into `"2026"`.
-    let time = time
-        .strip_suffix('Z')
-        .or_else(|| time.strip_suffix('z'))
-        .unwrap_or(time);
-    let time = time.split(['+', '-']).next().unwrap_or(time);
-    let time = time.split('.').next().unwrap_or(time);
-    let mut d = date.split('-');
-    let y: i64 = d.next()?.parse().ok()?;
-    let m: i64 = d.next()?.parse().ok()?;
-    let day: i64 = d.next()?.parse().ok()?;
-    let mut t = time.split(':');
-    let hh: u64 = t.next()?.parse().ok()?;
-    let mm: u64 = t.next()?.parse().ok()?;
-    let ss: u64 = t.next().and_then(|v| v.parse().ok()).unwrap_or(0);
-    Some(days_from_civil(y, m, day).saturating_mul(86400) + hh * 3600 + mm * 60 + ss)
-}
-
-/// Howard Hinnant civil-from-days inverse (UTC days since 1970-01-01).
-fn days_from_civil(y: i64, m: i64, d: i64) -> u64 {
-    let y = if m <= 2 { y - 1 } else { y };
-    let era = y.div_euclid(400);
-    let yoe = y - era * 400;
-    let doy = (153 * (m + if m > 2 { -3 } else { 9 }) + 2) / 5 + d - 1;
-    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
-    (era * 146097 + doe - 719468) as u64
-}
-
-fn ensure_join_open(deadline_raw: Option<&str>) -> Result<(), (StatusCode, String)> {
-    let Some(raw) = deadline_raw else {
-        return Err((
+fn ensure_join_open(finished: Option<bool>) -> Result<(), (StatusCode, String)> {
+    match finished {
+        None => Err((
             StatusCode::UNPROCESSABLE_ENTITY,
-            "could not load FPL gameweek deadline".into(),
-        ));
-    };
-    let Some(deadline) = parse_iso_unix(raw) else {
-        return Err((
+            "could not load FPL gameweek".into(),
+        )),
+        Some(true) => Err((
             StatusCode::UNPROCESSABLE_ENTITY,
-            format!("invalid FPL deadline `{raw}`"),
-        ));
-    };
-    if now_unix() >= deadline {
-        return Err((
-            StatusCode::UNPROCESSABLE_ENTITY,
-            "FPL deadline has passed for this gameweek".into(),
-        ));
+            "FPL gameweek is finished".into(),
+        )),
+        Some(false) => Ok(()),
     }
-    Ok(())
 }
 
 fn sign_error(ctx: &str, err: alloy::signers::Error) -> (StatusCode, String) {
@@ -151,7 +111,7 @@ pub async fn join_attestation(
     let join_event = meta
         .join_event_id()
         .map_err(|e| (StatusCode::BAD_REQUEST, e))?;
-    ensure_join_open(event_deadline(&bootstrap, join_event))?;
+    ensure_join_open(event_is_finished(&bootstrap, join_event))?;
 
     if meta.requires_league() {
         let league_id = meta
@@ -674,16 +634,24 @@ pub async fn competition_void_attestation(
 
 #[cfg(test)]
 mod tests {
-    use super::parse_iso_unix;
+    use super::ensure_join_open;
+    use axum::http::StatusCode;
 
     #[test]
-    fn parse_fpl_api_deadline_with_z() {
-        // 2026-09-04 17:30:00 UTC
-        assert_eq!(parse_iso_unix("2026-09-04T17:30:00Z"), Some(1_788_543_000));
+    fn join_stays_open_until_gameweek_is_finished() {
+        assert!(ensure_join_open(Some(false)).is_ok());
     }
 
     #[test]
-    fn parse_fpl_api_deadline_with_offset() {
-        assert_eq!(parse_iso_unix("2026-09-04T17:30:00+00:00"), Some(1_788_543_000));
+    fn join_rejects_finished_gameweek() {
+        let err = ensure_join_open(Some(true)).unwrap_err();
+        assert_eq!(err.0, StatusCode::UNPROCESSABLE_ENTITY);
+        assert!(err.1.to_lowercase().contains("finished"));
+    }
+
+    #[test]
+    fn join_rejects_unknown_gameweek() {
+        let err = ensure_join_open(None).unwrap_err();
+        assert_eq!(err.0, StatusCode::UNPROCESSABLE_ENTITY);
     }
 }

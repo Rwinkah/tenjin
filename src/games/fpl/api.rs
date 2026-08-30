@@ -182,9 +182,9 @@ pub fn event_is_data_checked(bootstrap: &BootstrapPayload, event_id: u32) -> boo
         .unwrap_or(false)
 }
 
-pub fn event_deadline(bootstrap: &BootstrapPayload, event_id: u32) -> Option<&str> {
-    event_by_id(bootstrap, event_id)
-        .and_then(|event| event.deadline_time.as_deref())
+/// `None` if the bootstrap payload has no row for this gameweek.
+pub fn event_is_finished(bootstrap: &BootstrapPayload, event_id: u32) -> Option<bool> {
+    event_by_id(bootstrap, event_id).map(|event| event.finished)
 }
 
 pub async fn fetch_entry(
