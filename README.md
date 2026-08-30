@@ -5,7 +5,7 @@ Oracle service that verifies off-chain results and signs settlement attestations
 ## What it does
 
 1. Accepts a wager id plus game-specific inputs (Lichess game, football fixture, or Strava outcome).
-2. Verifies the result from the source of truth where possible (Lichess API, football-data.org).
+2. Verifies the result from the source of truth where possible (Lichess API, football-data.org, FPL fixtures as a Premier League fallback). Football settle only when football-data.org or FPL marks the match ended.
 3. Maps the winner to the correct wallet (or signs a Django-verified Strava outcome).
 4. Returns a signed EIP-712 attestation for the matching oracle contract.
 

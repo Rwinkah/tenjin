@@ -8,8 +8,9 @@ use axum::Json;
 use serde::{Deserialize, Serialize};
 
 use crate::games::football::api_football::{
-    classify_fixture, fetch_fixture, fixture_status_label, FixtureOutcomeClass,
+    classify_fixture, fixture_status_label, FixtureOutcomeClass,
 };
+use crate::games::football::fpl_fallback::resolve_fixture;
 use crate::games::football::attestation::{
     build_binary_attestation, build_draw_attestation, build_join_permit, build_void_attestation,
 };
@@ -84,7 +85,7 @@ pub async fn join_attestation(
         .map_err(|e| (StatusCode::FORBIDDEN, e))?;
 
     // Soft check: fixture should still be pre-match when joining.
-    let fixture = fetch_fixture(&state, meta.fixture_id).await?;
+    let fixture = resolve_fixture(&state, &meta).await?;
     let class = classify_fixture(&fixture);
     if matches!(
         class,
@@ -193,7 +194,7 @@ pub async fn binary_attestation(
 ) -> Result<Json<BinaryAttestationResponse>, (StatusCode, String)> {
     let meta = FootballGameId::parse(&req.game_id).map_err(|e| (StatusCode::BAD_REQUEST, e))?;
     let (creator_pick, joiner_pick) = resolved_picks(&meta)?;
-    let fixture = fetch_fixture(&state, meta.fixture_id).await?;
+    let fixture = resolve_fixture(&state, &meta).await?;
     let class = classify_fixture(&fixture);
 
     let winning_pick = match (meta.kind, class) {
@@ -287,7 +288,7 @@ pub async fn draw_attestation(
         ));
     }
     let _ = resolved_picks(&meta)?;
-    let fixture = fetch_fixture(&state, meta.fixture_id).await?;
+    let fixture = resolve_fixture(&state, &meta).await?;
     if classify_fixture(&fixture) != FixtureOutcomeClass::Draw {
         return Err((
             StatusCode::UNPROCESSABLE_ENTITY,
@@ -329,7 +330,7 @@ pub async fn void_attestation(
 ) -> Result<Json<SimpleAttestationResponse>, (StatusCode, String)> {
     let meta = FootballGameId::parse(&req.game_id).map_err(|e| (StatusCode::BAD_REQUEST, e))?;
     let _ = resolved_picks(&meta)?;
-    let fixture = fetch_fixture(&state, meta.fixture_id).await?;
+    let fixture = resolve_fixture(&state, &meta).await?;
     if classify_fixture(&fixture) != FixtureOutcomeClass::Void {
         return Err((
             StatusCode::UNPROCESSABLE_ENTITY,

@@ -131,15 +131,7 @@ pub fn classify_fixture(item: &FixtureItem) -> FixtureOutcomeClass {
     match short {
         "PST" | "CANC" | "ABD" | "AWD" | "WO" => return FixtureOutcomeClass::Void,
         "FT" | "AET" | "PEN" => {}
-        "LIVE" => return FixtureOutcomeClass::NotReady,
-        // Stale "not started" / unknown codes: if the feed already published a
-        // full-time score, settle from that instead of blocking on status.
-        _ => {
-            let (Some(home), Some(away)) = (item.goals.home, item.goals.away) else {
-                return FixtureOutcomeClass::NotReady;
-            };
-            return outcome_from_goals(home, away);
-        }
+        _ => return FixtureOutcomeClass::NotReady,
     }
 
     let (Some(home), Some(away)) = (item.goals.home, item.goals.away) else {
@@ -281,14 +273,14 @@ mod tests {
     }
 
     #[test]
-    fn stale_ns_with_full_time_score_is_ready() {
+    fn stale_ns_with_score_is_not_ready() {
         assert_eq!(
             classify_fixture(&item("NS", Some(2), Some(1))),
-            FixtureOutcomeClass::HomeWin
+            FixtureOutcomeClass::NotReady
         );
         assert_eq!(
             classify_fixture(&item("TIMED", Some(0), Some(0))),
-            FixtureOutcomeClass::Draw
+            FixtureOutcomeClass::NotReady
         );
     }
 
