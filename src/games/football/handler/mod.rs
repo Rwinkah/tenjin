@@ -8,7 +8,7 @@ use axum::Json;
 use serde::{Deserialize, Serialize};
 
 use crate::games::football::api_football::{
-    classify_fixture, fetch_fixture, FixtureOutcomeClass,
+    classify_fixture, fetch_fixture, fixture_status_label, FixtureOutcomeClass,
 };
 use crate::games::football::attestation::{
     build_binary_attestation, build_draw_attestation, build_join_permit, build_void_attestation,
@@ -97,7 +97,7 @@ pub async fn join_attestation(
             StatusCode::UNPROCESSABLE_ENTITY,
             format!(
                 "fixture `{}` is no longer open for joining (status `{}`)",
-                meta.fixture_id, fixture.fixture.status.short
+                meta.fixture_id, fixture_status_label(&fixture)
             ),
         ));
     }
@@ -229,7 +229,8 @@ pub async fn binary_attestation(
                 StatusCode::UNPROCESSABLE_ENTITY,
                 format!(
                     "fixture `{}` not ready to settle (status `{}`)",
-                    meta.fixture_id, fixture.fixture.status.short
+                    meta.fixture_id,
+                    fixture_status_label(&fixture)
                 ),
             ));
         }
@@ -293,7 +294,7 @@ pub async fn draw_attestation(
             format!(
                 "fixture `{}` is not a draw (status `{}`, goals {:?}-{:?})",
                 meta.fixture_id,
-                fixture.fixture.status.short,
+                fixture_status_label(&fixture),
                 fixture.goals.home,
                 fixture.goals.away
             ),
@@ -334,7 +335,7 @@ pub async fn void_attestation(
             StatusCode::UNPROCESSABLE_ENTITY,
             format!(
                 "fixture `{}` is not void (status `{}`)",
-                meta.fixture_id, fixture.fixture.status.short
+                meta.fixture_id, fixture_status_label(&fixture)
             ),
         ));
     }
