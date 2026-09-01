@@ -4,7 +4,7 @@ use alloy::primitives::{Address, Bytes, B256, U256};
 use alloy::signers::local::PrivateKeySigner;
 use alloy::signers::Signer;
 use alloy::sol;
-use alloy::sol_types::{eip712_domain, SolStruct, SolValue};
+use alloy::sol_types::{eip712_domain, SolStruct};
 
 sol! {
     #[derive(Debug)]
@@ -52,9 +52,8 @@ async fn sign_struct_hash(
     Ok(signature.as_bytes())
 }
 
-/// `abi.encode(uint256 deadline, bytes signature)` for on-chain `OracleAttestation.data`.
 fn encode_attestation_data(deadline: u64, signature: [u8; 65]) -> Bytes {
-    (U256::from(deadline), signature.to_vec()).abi_encode().into()
+    crate::shared::attestation::encode_deadline_and_signature(deadline, &signature)
 }
 
 #[derive(Debug, Clone)]

@@ -71,7 +71,7 @@ async fn sign_struct_hash(
 }
 
 fn encode_attestation_data(deadline: u64, signature: [u8; 65]) -> Bytes {
-    (U256::from(deadline), signature.to_vec()).abi_encode().into()
+    crate::shared::attestation::encode_deadline_and_signature(deadline, &signature)
 }
 
 #[derive(Debug, Clone)]
