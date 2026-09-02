@@ -1,7 +1,11 @@
 //! Join permit validation before Tenjin signs `CompetitionJoin`.
 
+#[cfg(test)]
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use alloy::consensus::BlockHeader;
+use alloy::eips::BlockNumberOrTag;
+use alloy::network::primitives::BlockResponse;
 use alloy::primitives::{keccak256, Address, B256, U256};
 use alloy::providers::{Provider, ProviderBuilder};
 use alloy::sol;
@@ -114,6 +118,9 @@ pub struct OnChainJoinSnapshot {
     pub status: u8,
     pub participants_count: U256,
     pub expires_at: U256,
+    /// Latest `block.timestamp` from the same RPC as the snapshot. The contract
+    /// enforces `wgExpires > block.timestamp`; wall clock must not be mixed in.
+    pub chain_now: U256,
     pub game_id_key: B256,
 }
 
@@ -132,6 +139,7 @@ pub async fn fetch_on_chain_join_snapshot(
     let provider = ProviderBuilder::new().connect(rpc_url).await.map_err(|e| {
         format!("failed to connect RPC for join validation: {e}")
     })?;
+    let chain_now = latest_chain_timestamp(&provider).await?;
     let reader = LichessContractReader::new(contract, provider);
     let snapshot = reader
         .lcWagerJoinSnapshot(wager_id)
@@ -145,10 +153,21 @@ pub async fn fetch_on_chain_join_snapshot(
         status: snapshot.status,
         participants_count: snapshot.participantsCount,
         expires_at: snapshot.expiresAt,
+        chain_now,
         game_id_key: snapshot.gameIdKey,
     })
 }
 
+async fn latest_chain_timestamp(provider: &impl Provider) -> Result<U256, String> {
+    let block = provider
+        .get_block_by_number(BlockNumberOrTag::Latest)
+        .await
+        .map_err(|e| format!("failed to read latest block: {e}"))?
+        .ok_or_else(|| "latest block missing".to_string())?;
+    Ok(U256::from(block.header().timestamp()))
+}
+
+#[cfg(test)]
 fn now_unix() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -170,8 +189,7 @@ fn validate_snapshot_base(snapshot: &OnChainJoinSnapshot, expected_format: u8) -
 }
 
 fn validate_join_window_open(snapshot: &OnChainJoinSnapshot) -> Result<(), String> {
-    let now = U256::from(now_unix());
-    if snapshot.expires_at <= now {
+    if snapshot.expires_at <= snapshot.chain_now {
         return Err("wager join window has expired".into());
     }
     Ok(())
@@ -433,8 +451,22 @@ mod tests {
             status,
             participants_count: U256::from(participants_count),
             expires_at: U256::from(expires_at),
+            chain_now: U256::from(now_unix()),
             game_id_key: B256::ZERO,
         }
+    }
+
+    #[test]
+    fn join_window_follows_chain_time_not_wall_clock() {
+        let chain_now = 1_700_000_000u64;
+        let expires_at = chain_now + 3600;
+        assert!(
+            now_unix() > expires_at,
+            "fixture expiry must be in the wall-clock past"
+        );
+        let mut snap = test_snapshot(WAGER_FORMAT_BINARY, WG_FLAG_CREATED, 0, expires_at);
+        snap.chain_now = U256::from(chain_now);
+        assert!(validate_binary_joinable_snapshot(&snap).is_ok());
     }
 
     #[test]
