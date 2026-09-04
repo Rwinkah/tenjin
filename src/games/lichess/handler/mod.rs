@@ -19,6 +19,7 @@ use crate::games::lichess::settlement::{
     CompetitionSettlementOption,
 };
 use crate::games::lichess::models::{LichessColor, LichessGameExport, LichessStatus};
+use crate::shared::min_stake::{self, GameKind};
 use crate::shared::models::AppState;
 
 const LICHESS_GAME_EXPORT_URL: &str = "https://lichess.org/game/export";
@@ -499,6 +500,9 @@ pub struct JoinAttestationRequest {
     pub joiner_lichess_username: Option<String>,
     #[serde(default)]
     pub challenge_id: Option<String>,
+    /// Campaign slug. Missing → `platform`.
+    #[serde(default)]
+    pub campaign: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -546,6 +550,7 @@ async fn issue_join_permit(
     game_id: Option<&str>,
     joiner_lichess_username: Option<&str>,
     challenge_id: Option<&str>,
+    campaign: Option<&str>,
 ) -> Result<JoinAttestationResponse, (StatusCode, String)> {
     if joiner.is_zero() {
         return Err((
@@ -553,6 +558,8 @@ async fn issue_join_permit(
             "joiner must not be the zero address".into(),
         ));
     }
+
+    min_stake::enforce_min_stake(state, campaign, GameKind::Lichess, wager_id).await?;
 
     match kind {
         JoinKind::Binary => {
@@ -589,6 +596,7 @@ pub async fn join_attestation(
         req.game_id.as_deref(),
         req.joiner_lichess_username.as_deref(),
         req.challenge_id.as_deref(),
+        req.campaign.as_deref(),
     )
     .await?;
 
@@ -601,6 +609,8 @@ pub async fn join_attestation(
 pub struct CompetitionJoinAttestationRequest {
     pub wager_id: B256,
     pub joiner: Address,
+    #[serde(default)]
+    pub campaign: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -626,6 +636,7 @@ pub async fn competition_join_attestation(
         None,
         None,
         None,
+        req.campaign.as_deref(),
     )
     .await?;
 

@@ -11,6 +11,7 @@ use crate::games::strava::attestation::{
     build_binary_attestation, build_draw_attestation, build_join_permit, build_void_attestation,
 };
 use crate::games::strava::models::StravaGameId;
+use crate::shared::min_stake::{self, GameKind};
 use crate::shared::models::AppState;
 
 const ATTESTATION_TTL_SECS: u64 = 7 * 24 * 3600;
@@ -92,6 +93,8 @@ pub struct JoinPermitRequest {
     pub joiner_display_name: Option<String>,
     #[serde(default)]
     pub chain_id: Option<u64>,
+    #[serde(default)]
+    pub campaign: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -107,6 +110,8 @@ pub async fn join_attestation(
     Json(req): Json<JoinPermitRequest>,
 ) -> Result<Json<JoinPermitResponse>, (StatusCode, String)> {
     let joiner = reject_zero(req.joiner, "joiner")?;
+    min_stake::enforce_min_stake(&state, req.campaign.as_deref(), GameKind::Strava, req.wager_id)
+        .await?;
     if !req.game_id.trim().is_empty() {
         let meta = StravaGameId::parse(&req.game_id).map_err(|e| (StatusCode::BAD_REQUEST, e))?;
         meta.ensure_directed_joiner(req.joiner_display_name.as_deref())

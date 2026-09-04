@@ -2,6 +2,11 @@ use alloy::primitives::{Address, ChainId};
 use alloy::signers::local::PrivateKeySigner;
 use alloy::signers::Signer;
 use reqwest::Client;
+use sqlx::postgres::PgPoolOptions;
+use sqlx::PgPool;
+use std::sync::Mutex;
+
+use crate::shared::min_stake::PriceCache;
 
 pub struct AppState {
     pub signer: PrivateKeySigner,
@@ -22,8 +27,13 @@ pub struct AppState {
     pub eth_rpc_url: Option<String>,
     /// Deployed `LichessContract` address (same as wager-backend).
     pub lichess_contract_address: Option<Address>,
+    pub football_contract_address: Option<Address>,
+    pub strava_contract_address: Option<Address>,
+    pub fpl_contract_address: Option<Address>,
     /// Optional Lichess OAuth token for challenge destination verification on directed joins.
     pub lichess_api_token: Option<String>,
+    pub db: Option<PgPool>,
+    pub price_cache: Mutex<PriceCache>,
 }
 
 impl AppState {
@@ -36,7 +46,8 @@ impl AppState {
     /// - `STRAVA_ORACLE_ADDRESS` — StravaOracle (optional; zero if unset)
     /// - `FPL_ORACLE_ADDRESS` — FplOracle (optional; zero if unset)
     /// - `FOOTBALL_DATA_API_TOKEN` (or legacy `API_FOOTBALL_KEY`) — football-data.org token
-    /// - `ETH_RPC_URL`, `LICHESS_CONTRACT_ADDRESS`, `LICHESS_API_TOKEN` — join validation
+    /// - `ETH_RPC_URL`, `*_CONTRACT_ADDRESS`, `LICHESS_API_TOKEN` — join validation
+    /// - `DATABASE_URL` — Postgres (campaign min-stake lookup; fail closed if unset)
     pub fn from_env() -> Self {
         let pk = std::env::var("PRIVATE_KEY").expect("PRIVATE_KEY must be set");
         let pk = pk.trim();
@@ -97,19 +108,21 @@ impl AppState {
             .map(|s| s.trim().to_string())
             .filter(|s| !s.is_empty());
 
-        let lichess_contract_raw = std::env::var("LICHESS_CONTRACT_ADDRESS").ok();
-        let lichess_contract_address = lichess_contract_raw
-            .as_deref()
-            .map(str::trim)
-            .filter(|s| !s.is_empty())
-            .map(|s| s.parse::<Address>())
-            .transpose()
-            .expect("LICHESS_CONTRACT_ADDRESS must be a 0x-prefixed 20-byte address when set");
-
         let lichess_api_token = std::env::var("LICHESS_API_TOKEN")
             .ok()
             .map(|s| s.trim().to_string())
             .filter(|s| !s.is_empty());
+
+        let db = std::env::var("DATABASE_URL")
+            .ok()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .map(|url| {
+                PgPoolOptions::new()
+                    .max_connections(5)
+                    .connect_lazy(&url)
+                    .unwrap_or_else(|e| panic!("DATABASE_URL is invalid: {e}"))
+            });
 
         Self {
             signer,
@@ -120,8 +133,24 @@ impl AppState {
             fpl_oracle_address,
             football_data_api_token,
             eth_rpc_url,
-            lichess_contract_address,
+            lichess_contract_address: optional_address("LICHESS_CONTRACT_ADDRESS"),
+            football_contract_address: optional_address("FOOTBALL_CONTRACT_ADDRESS"),
+            strava_contract_address: optional_address("STRAVA_CONTRACT_ADDRESS"),
+            fpl_contract_address: optional_address("FPL_CONTRACT_ADDRESS"),
             lichess_api_token,
+            db,
+            price_cache: Mutex::new(PriceCache::new()),
         }
     }
+}
+
+fn optional_address(var: &str) -> Option<Address> {
+    std::env::var(var)
+        .ok()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .map(|s| {
+            s.parse::<Address>()
+                .unwrap_or_else(|_| panic!("{var} must be a 0x-prefixed 20-byte address when set"))
+        })
 }

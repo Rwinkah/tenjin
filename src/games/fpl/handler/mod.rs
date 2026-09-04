@@ -20,6 +20,7 @@ use crate::games::fpl::settlement::{
     classify_gameweek, classify_h2h, classify_league, competition_placements, BinaryClass, H2hScore,
     LeagueStanding, RosterStanding, SideScore,
 };
+use crate::shared::min_stake::{self, GameKind};
 use crate::shared::models::AppState;
 
 const ATTESTATION_TTL_SECS: u64 = 7 * 24 * 3600;
@@ -90,6 +91,8 @@ pub struct JoinPermitRequest {
     pub joiner_display_name: Option<String>,
     #[serde(default)]
     pub joiner_entry_id: Option<u64>,
+    #[serde(default)]
+    pub campaign: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -103,6 +106,7 @@ pub async fn join_attestation(
     State(state): State<Arc<AppState>>,
     Json(req): Json<JoinPermitRequest>,
 ) -> Result<Json<JoinPermitResponse>, (StatusCode, String)> {
+    min_stake::enforce_min_stake(&state, req.campaign.as_deref(), GameKind::Fpl, req.wager_id).await?;
     let meta = FplGameId::parse(&req.game_id).map_err(|e| (StatusCode::BAD_REQUEST, e))?;
     meta.ensure_directed_joiner(req.joiner_display_name.as_deref())
         .map_err(|e| (StatusCode::FORBIDDEN, e))?;

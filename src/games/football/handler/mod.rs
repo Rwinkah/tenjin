@@ -15,6 +15,7 @@ use crate::games::football::attestation::{
     build_binary_attestation, build_draw_attestation, build_join_permit, build_void_attestation,
 };
 use crate::games::football::models::{FootballGameId, FootballMarketKind};
+use crate::shared::min_stake::{self, GameKind};
 use crate::shared::models::AppState;
 
 const ATTESTATION_TTL_SECS: u64 = 7 * 24 * 3600;
@@ -64,6 +65,8 @@ pub struct JoinPermitRequest {
     /// Platform username (display_name) for directed wager checks.
     #[serde(default)]
     pub joiner_display_name: Option<String>,
+    #[serde(default)]
+    pub campaign: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -83,6 +86,9 @@ pub async fn join_attestation(
         .map_err(|e| (StatusCode::BAD_REQUEST, e))?;
     meta.ensure_directed_joiner(req.joiner_display_name.as_deref())
         .map_err(|e| (StatusCode::FORBIDDEN, e))?;
+
+    min_stake::enforce_min_stake(&state, req.campaign.as_deref(), GameKind::Football, req.wager_id)
+        .await?;
 
     // Soft check: fixture should still be pre-match when joining.
     let fixture = resolve_fixture(&state, &meta).await?;
