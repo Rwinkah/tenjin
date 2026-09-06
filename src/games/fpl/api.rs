@@ -124,7 +124,11 @@ pub struct H2hMatchRow {
     pub entry_2_points: Option<i32>,
 }
 
-fn map_err_status(status: reqwest::StatusCode, body: String, label: &str) -> (axum::http::StatusCode, String) {
+fn map_err_status(
+    status: reqwest::StatusCode,
+    body: String,
+    label: &str,
+) -> (axum::http::StatusCode, String) {
     let code = if status.as_u16() == 404 {
         axum::http::StatusCode::NOT_FOUND
     } else {
@@ -168,11 +172,22 @@ async fn get_json<T: for<'de> Deserialize<'de>>(
     })
 }
 
-pub async fn fetch_bootstrap(state: &AppState) -> Result<BootstrapPayload, (axum::http::StatusCode, String)> {
-    get_json(state, &format!("{FPL_BASE}/bootstrap-static/"), &[], "FPL bootstrap").await
+pub async fn fetch_bootstrap(
+    state: &AppState,
+) -> Result<BootstrapPayload, (axum::http::StatusCode, String)> {
+    get_json(
+        state,
+        &format!("{FPL_BASE}/bootstrap-static/"),
+        &[],
+        "FPL bootstrap",
+    )
+    .await
 }
 
-pub fn event_by_id<'a>(bootstrap: &'a BootstrapPayload, event_id: u32) -> Option<&'a BootstrapEvent> {
+pub fn event_by_id<'a>(
+    bootstrap: &'a BootstrapPayload,
+    event_id: u32,
+) -> Option<&'a BootstrapEvent> {
     bootstrap.events.iter().find(|event| event.id == event_id)
 }
 
@@ -308,10 +323,7 @@ pub async fn fetch_h2h_match(
         let payload: H2hMatchesPayload = get_json(
             state,
             &format!("{FPL_BASE}/leagues-h2h-matches/league/{league_id}/"),
-            &[
-                ("page", page.to_string()),
-                ("event", event.to_string()),
-            ],
+            &[("page", page.to_string()), ("event", event.to_string())],
             "FPL H2H matches",
         )
         .await?;

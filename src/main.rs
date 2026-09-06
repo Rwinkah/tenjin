@@ -18,6 +18,7 @@ use shared::models::AppState;
 async fn main() {
     dotenvy::dotenv().ok();
 
+    shared::posthog::init().await;
     let state = Arc::new(AppState::from_env());
 
     let host = std::env::var("HOST")
@@ -45,6 +46,9 @@ async fn main() {
         .nest("/football", football_router())
         .nest("/strava", strava_router())
         .nest("/fpl", fpl_router())
+        .layer(axum::middleware::from_fn(
+            shared::posthog::capture_server_errors,
+        ))
         .layer(cors)
         .with_state(state);
 

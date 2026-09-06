@@ -6,7 +6,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use alloy::consensus::BlockHeader;
 use alloy::eips::BlockNumberOrTag;
 use alloy::network::primitives::BlockResponse;
-use alloy::primitives::{keccak256, Address, B256, U256};
+use alloy::primitives::{Address, B256, U256, keccak256};
 use alloy::providers::{Provider, ProviderBuilder};
 use alloy::sol;
 use reqwest::header::{ACCEPT, AUTHORIZATION};
@@ -57,7 +57,9 @@ impl JoinKind {
         match raw.trim().to_lowercase().as_str() {
             "binary" | "1v1" | "match" => Ok(Self::Binary),
             "competition" | "tournament" | "arena" => Ok(Self::Competition),
-            other => Err(format!("unsupported join kind `{other}`; use binary or competition")),
+            other => Err(format!(
+                "unsupported join kind `{other}`; use binary or competition"
+            )),
         }
     }
 }
@@ -136,9 +138,10 @@ pub async fn fetch_on_chain_join_snapshot(
         .lichess_contract_address
         .ok_or_else(|| "LICHESS_CONTRACT_ADDRESS is not configured".to_string())?;
 
-    let provider = ProviderBuilder::new().connect(rpc_url).await.map_err(|e| {
-        format!("failed to connect RPC for join validation: {e}")
-    })?;
+    let provider = ProviderBuilder::new()
+        .connect(rpc_url)
+        .await
+        .map_err(|e| format!("failed to connect RPC for join validation: {e}"))?;
     let chain_now = latest_chain_timestamp(&provider).await?;
     let reader = LichessContractReader::new(contract, provider);
     let snapshot = reader
@@ -175,7 +178,10 @@ fn now_unix() -> u64 {
         .as_secs()
 }
 
-fn validate_snapshot_base(snapshot: &OnChainJoinSnapshot, expected_format: u8) -> Result<(), String> {
+fn validate_snapshot_base(
+    snapshot: &OnChainJoinSnapshot,
+    expected_format: u8,
+) -> Result<(), String> {
     if !snapshot.exists {
         return Err("wager does not exist on-chain".into());
     }
@@ -211,7 +217,9 @@ pub fn validate_binary_joinable_snapshot(snapshot: &OnChainJoinSnapshot) -> Resu
 }
 
 /// Multi-party competition: join while `CREATED` or `ACCEPTED` until expiry; capacity enforced on-chain.
-pub fn validate_competition_joinable_snapshot(snapshot: &OnChainJoinSnapshot) -> Result<(), String> {
+pub fn validate_competition_joinable_snapshot(
+    snapshot: &OnChainJoinSnapshot,
+) -> Result<(), String> {
     validate_snapshot_base(snapshot, WAGER_FORMAT_MULTI_PARTY)?;
     match snapshot.status {
         WG_FLAG_CREATED | WG_FLAG_ACCEPTED => {}
@@ -222,10 +230,7 @@ pub fn validate_competition_joinable_snapshot(snapshot: &OnChainJoinSnapshot) ->
             ));
         }
         other => {
-            return Err(format!(
-                "wager is not open for joining (status {})",
-                other
-            ));
+            return Err(format!("wager is not open for joining (status {})", other));
         }
     }
     validate_join_window_open(snapshot)
@@ -299,9 +304,10 @@ pub async fn fetch_on_chain_leave_snapshot(
         .lichess_contract_address
         .ok_or_else(|| "LICHESS_CONTRACT_ADDRESS is not configured".to_string())?;
 
-    let provider = ProviderBuilder::new().connect(rpc_url).await.map_err(|e| {
-        format!("failed to connect RPC for leave validation: {e}")
-    })?;
+    let provider = ProviderBuilder::new()
+        .connect(rpc_url)
+        .await
+        .map_err(|e| format!("failed to connect RPC for leave validation: {e}"))?;
     let reader = LichessContractReader::new(contract, provider);
     let snapshot = reader
         .lcWagerLeaveSnapshot(wager_id, leaver)

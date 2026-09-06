@@ -56,4 +56,3 @@ pub struct LichessPlayer {
 pub struct LichessUser {
     pub id: String,
 }
-

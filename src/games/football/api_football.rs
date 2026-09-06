@@ -109,8 +109,9 @@ fn map_status_short(status: &str) -> String {
         "ABANDONED" | "ABD" => "ABD".into(),
         "AWARDED" | "AWD" | "WO" => "AWD".into(),
         "SCHEDULED" | "TIMED" | "NS" | "TBD" | "NOT_STARTED" => "NS".into(),
-        "IN_PLAY" | "PAUSED" | "EXTRA_TIME" | "LIVE" | "1H" | "2H" | "HT" | "ET" | "BT"
-        | "INT" => "LIVE".into(),
+        "IN_PLAY" | "PAUSED" | "EXTRA_TIME" | "LIVE" | "1H" | "2H" | "HT" | "ET" | "BT" | "INT" => {
+            "LIVE".into()
+        }
         other if other.is_empty() => "NS".into(),
         other => other.to_string(),
     }

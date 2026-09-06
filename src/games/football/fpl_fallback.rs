@@ -153,11 +153,7 @@ pub fn kickoffs_match(left: &str, right: &str) -> bool {
 }
 
 fn normalize_kickoff(raw: &str) -> String {
-    raw.trim()
-        .replace("+00:00", "Z")
-        .chars()
-        .take(16)
-        .collect()
+    raw.trim().replace("+00:00", "Z").chars().take(16).collect()
 }
 
 pub fn ended_fixture_item(fixture_id: u64, home: i32, away: i32, source: &str) -> FixtureItem {
@@ -260,12 +256,13 @@ async fn get_json<T: for<'de> Deserialize<'de>>(
     })
 }
 
-
 pub async fn resolve_fixture(
     state: &AppState,
     meta: &FootballGameId,
 ) -> Result<FixtureItem, (axum::http::StatusCode, String)> {
-    use crate::games::football::api_football::{classify_fixture, fetch_fixture, FixtureOutcomeClass};
+    use crate::games::football::api_football::{
+        FixtureOutcomeClass, classify_fixture, fetch_fixture,
+    };
 
     let fd = fetch_fixture(state, meta.fixture_id).await;
     match fd {

@@ -1,19 +1,19 @@
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use alloy::primitives::{Address, Bytes, B256};
+use alloy::primitives::{Address, B256, Bytes};
+use axum::Json;
 use axum::extract::State;
 use axum::http::StatusCode;
-use axum::Json;
 use serde::{Deserialize, Serialize};
 
 use crate::games::football::api_football::{
-    classify_fixture, fixture_status_label, FixtureOutcomeClass,
+    FixtureOutcomeClass, classify_fixture, fixture_status_label,
 };
-use crate::games::football::fpl_fallback::resolve_fixture;
 use crate::games::football::attestation::{
     build_binary_attestation, build_draw_attestation, build_join_permit, build_void_attestation,
 };
+use crate::games::football::fpl_fallback::resolve_fixture;
 use crate::games::football::models::{FootballGameId, FootballMarketKind};
 use crate::shared::min_stake::{self, GameKind};
 use crate::shared::models::AppState;
@@ -87,8 +87,13 @@ pub async fn join_attestation(
     meta.ensure_directed_joiner(req.joiner_display_name.as_deref())
         .map_err(|e| (StatusCode::FORBIDDEN, e))?;
 
-    min_stake::enforce_min_stake(&state, req.campaign.as_deref(), GameKind::Football, req.wager_id)
-        .await?;
+    min_stake::enforce_min_stake(
+        &state,
+        req.campaign.as_deref(),
+        GameKind::Football,
+        req.wager_id,
+    )
+    .await?;
 
     // Soft check: fixture should still be pre-match when joining.
     let fixture = resolve_fixture(&state, &meta).await?;
@@ -104,7 +109,8 @@ pub async fn join_attestation(
             StatusCode::UNPROCESSABLE_ENTITY,
             format!(
                 "fixture `{}` is no longer open for joining (status `{}`)",
-                meta.fixture_id, fixture_status_label(&fixture)
+                meta.fixture_id,
+                fixture_status_label(&fixture)
             ),
         ));
     }
@@ -219,11 +225,7 @@ pub async fn binary_attestation(
             let away = fixture.goals.away.unwrap_or(0);
             let total = home + away;
             let line = meta.line.unwrap_or(2.5);
-            if (total as f64) > line {
-                "O"
-            } else {
-                "U"
-            }
+            if (total as f64) > line { "O" } else { "U" }
         }
         (_, FixtureOutcomeClass::Void) => {
             return Err((
@@ -342,7 +344,8 @@ pub async fn void_attestation(
             StatusCode::UNPROCESSABLE_ENTITY,
             format!(
                 "fixture `{}` is not void (status `{}`)",
-                meta.fixture_id, fixture_status_label(&fixture)
+                meta.fixture_id,
+                fixture_status_label(&fixture)
             ),
         ));
     }

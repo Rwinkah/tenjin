@@ -4,7 +4,7 @@ use std::str::FromStr;
 use std::time::{Duration, Instant};
 
 use alloy::network::TransactionBuilder;
-use alloy::primitives::{keccak256, Address, B256, Bytes, U256};
+use alloy::primitives::{Address, B256, Bytes, U256, keccak256};
 use alloy::providers::{Provider, ProviderBuilder};
 use alloy::rpc::types::TransactionRequest;
 use axum::http::StatusCode;
@@ -45,7 +45,10 @@ pub struct PriceCache {
 
 impl PriceCache {
     pub fn new() -> Self {
-        Self { usd: None, ngn: None }
+        Self {
+            usd: None,
+            ngn: None,
+        }
     }
 }
 
@@ -112,7 +115,11 @@ fn wagers_selector() -> [u8; 4] {
     [hash[0], hash[1], hash[2], hash[3]]
 }
 
-pub async fn fetch_wg_min_amount(rpc_url: &str, contract: Address, wager_id: B256) -> Result<U256, String> {
+pub async fn fetch_wg_min_amount(
+    rpc_url: &str,
+    contract: Address,
+    wager_id: B256,
+) -> Result<U256, String> {
     let provider = ProviderBuilder::new()
         .connect(rpc_url)
         .await
@@ -128,7 +135,10 @@ pub async fn fetch_wg_min_amount(rpc_url: &str, contract: Address, wager_id: B25
         .await
         .map_err(|e| format!("wagers() call failed: {e}"))?;
     if result.len() < 160 {
-        return Err(format!("wagers() return too short ({} bytes)", result.len()));
+        return Err(format!(
+            "wagers() return too short ({} bytes)",
+            result.len()
+        ));
     }
     Ok(U256::from_be_slice(&result[128..160]))
 }
@@ -170,7 +180,9 @@ fn campaign_is_active(row: &CampaignRow) -> Result<(), String> {
 fn campaign_allows_game(row: &CampaignRow, game: GameKind) -> Result<(), String> {
     match &row.games {
         serde_json::Value::Array(items) if !items.is_empty() => {
-            let ok = items.iter().any(|item| item.as_str() == Some(game.as_str()));
+            let ok = items
+                .iter()
+                .any(|item| item.as_str() == Some(game.as_str()));
             if ok {
                 Ok(())
             } else {
@@ -212,9 +224,12 @@ async fn fetch_eth_usd(state: &AppState) -> Result<f64, String> {
     let price = match price {
         Some(p) => p,
         None => {
-            let llama: DefiLlamaPrices = fetch_json(state, "https://coins.llama.fi/prices/current/coingecko:ethereum")
-                .await
-                .ok_or_else(|| "ETH/USD rate is unavailable".to_string())?;
+            let llama: DefiLlamaPrices = fetch_json(
+                state,
+                "https://coins.llama.fi/prices/current/coingecko:ethereum",
+            )
+            .await
+            .ok_or_else(|| "ETH/USD rate is unavailable".to_string())?;
             llama
                 .coins
                 .and_then(|c| c.get("coingecko:ethereum").and_then(|x| x.price))
@@ -247,9 +262,12 @@ async fn fetch_eth_ngn(state: &AppState) -> Result<f64, String> {
     {
         Some(p) => p,
         None => {
-            let llama: DefiLlamaPrices = fetch_json(state, "https://coins.llama.fi/prices/current/coingecko:ethereum")
-                .await
-                .ok_or_else(|| "ETH/NGN rate is unavailable".to_string())?;
+            let llama: DefiLlamaPrices = fetch_json(
+                state,
+                "https://coins.llama.fi/prices/current/coingecko:ethereum",
+            )
+            .await
+            .ok_or_else(|| "ETH/NGN rate is unavailable".to_string())?;
             llama
                 .coins
                 .and_then(|c| c.get("coingecko:ethereum").and_then(|x| x.price))
@@ -300,10 +318,12 @@ pub async fn enforce_min_stake(
     campaign_is_active(&row).map_err(|e| (StatusCode::FORBIDDEN, e))?;
     campaign_allows_game(&row, game).map_err(|e| (StatusCode::FORBIDDEN, e))?;
 
-    let floor: f64 = row
-        .min_stake_amount
-        .parse()
-        .map_err(|_| (StatusCode::INTERNAL_SERVER_ERROR, "campaign min stake is not a number".into()))?;
+    let floor: f64 = row.min_stake_amount.parse().map_err(|_| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "campaign min stake is not a number".into(),
+        )
+    })?;
     if floor <= 0.0 {
         return Err((
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -311,7 +331,8 @@ pub async fn enforce_min_stake(
         ));
     }
 
-    let contract = contract_for_game(state, game).map_err(|e| (StatusCode::SERVICE_UNAVAILABLE, e))?;
+    let contract =
+        contract_for_game(state, game).map_err(|e| (StatusCode::SERVICE_UNAVAILABLE, e))?;
     let wei = fetch_wg_min_amount(rpc, contract, wager_id)
         .await
         .map_err(|e| (StatusCode::BAD_GATEWAY, e))?;
@@ -319,16 +340,21 @@ pub async fn enforce_min_stake(
 
     let currency = row.min_stake_currency.to_ascii_uppercase();
     let usd = if currency == "USD" || currency == "NGN" {
-        fetch_eth_usd(state).await.map_err(|e| (StatusCode::BAD_GATEWAY, e))?
+        fetch_eth_usd(state)
+            .await
+            .map_err(|e| (StatusCode::BAD_GATEWAY, e))?
     } else {
         0.0
     };
     let ngn = if currency == "NGN" {
-        fetch_eth_ngn(state).await.map_err(|e| (StatusCode::BAD_GATEWAY, e))?
+        fetch_eth_ngn(state)
+            .await
+            .map_err(|e| (StatusCode::BAD_GATEWAY, e))?
     } else {
         0.0
     };
-    let quoted = quoted_stake(eth, &currency, usd, ngn).map_err(|e| (StatusCode::BAD_GATEWAY, e))?;
+    let quoted =
+        quoted_stake(eth, &currency, usd, ngn).map_err(|e| (StatusCode::BAD_GATEWAY, e))?;
     if quoted + f64::EPSILON < floor {
         return Err((
             StatusCode::FORBIDDEN,

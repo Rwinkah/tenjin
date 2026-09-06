@@ -37,10 +37,7 @@ pub fn is_void_lichess_status(status: LichessStatus) -> bool {
 
 /// Returns `Ok(())` when the export qualifies for `POST /attestations/void`.
 pub fn check_void_eligible(game: &LichessGameExport) -> Result<(), (StatusCode, String)> {
-    if matches!(
-        game.status,
-        LichessStatus::Created | LichessStatus::Started
-    ) {
+    if matches!(game.status, LichessStatus::Created | LichessStatus::Started) {
         return Err((
             StatusCode::BAD_REQUEST,
             format!(
@@ -60,10 +57,7 @@ pub fn check_void_eligible(game: &LichessGameExport) -> Result<(), (StatusCode, 
         ));
     }
 
-    if matches!(
-        game.status,
-        LichessStatus::Draw | LichessStatus::Stalemate
-    ) {
+    if matches!(game.status, LichessStatus::Draw | LichessStatus::Stalemate) {
         return Err((
             StatusCode::BAD_REQUEST,
             format!(
@@ -176,7 +170,9 @@ mod tests {
 
     #[test]
     fn rejects_decisive() {
-        assert!(check_void_eligible(&game(LichessStatus::Mate, Some(LichessColor::White))).is_err());
+        assert!(
+            check_void_eligible(&game(LichessStatus::Mate, Some(LichessColor::White))).is_err()
+        );
     }
 
     #[test]

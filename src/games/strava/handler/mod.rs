@@ -1,10 +1,10 @@
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use alloy::primitives::{Address, Bytes, B256};
+use alloy::primitives::{Address, B256, Bytes};
+use axum::Json;
 use axum::extract::State;
 use axum::http::StatusCode;
-use axum::Json;
 use serde::{Deserialize, Serialize};
 
 use crate::games::strava::attestation::{
@@ -48,10 +48,7 @@ fn strava_oracle(state: &AppState) -> Result<Address, (StatusCode, String)> {
     Ok(state.strava_oracle_address)
 }
 
-fn ensure_chain_id(
-    state: &AppState,
-    requested: Option<u64>,
-) -> Result<u64, (StatusCode, String)> {
+fn ensure_chain_id(state: &AppState, requested: Option<u64>) -> Result<u64, (StatusCode, String)> {
     let configured = signer_chain_id(state)?;
     if let Some(id) = requested {
         if id != configured {
@@ -110,8 +107,13 @@ pub async fn join_attestation(
     Json(req): Json<JoinPermitRequest>,
 ) -> Result<Json<JoinPermitResponse>, (StatusCode, String)> {
     let joiner = reject_zero(req.joiner, "joiner")?;
-    min_stake::enforce_min_stake(&state, req.campaign.as_deref(), GameKind::Strava, req.wager_id)
-        .await?;
+    min_stake::enforce_min_stake(
+        &state,
+        req.campaign.as_deref(),
+        GameKind::Strava,
+        req.wager_id,
+    )
+    .await?;
     if !req.game_id.trim().is_empty() {
         let meta = StravaGameId::parse(&req.game_id).map_err(|e| (StatusCode::BAD_REQUEST, e))?;
         meta.ensure_directed_joiner(req.joiner_display_name.as_deref())

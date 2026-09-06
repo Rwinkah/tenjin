@@ -18,7 +18,12 @@ pub struct SideScore {
     pub started_event: Option<u32>,
 }
 
-pub fn classify_gameweek(event: u32, data_checked: bool, creator: SideScore, joiner: SideScore) -> BinaryClass {
+pub fn classify_gameweek(
+    event: u32,
+    data_checked: bool,
+    creator: SideScore,
+    joiner: SideScore,
+) -> BinaryClass {
     if !data_checked {
         return BinaryClass::NotReady;
     }

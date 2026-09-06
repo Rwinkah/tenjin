@@ -28,7 +28,10 @@ pub struct PlacementEntry {
     pub player: Address,
 }
 
-pub async fn fetch_arena_results(state: &AppState, arena_id: &str) -> Result<Vec<ArenaResultRow>, String> {
+pub async fn fetch_arena_results(
+    state: &AppState,
+    arena_id: &str,
+) -> Result<Vec<ArenaResultRow>, String> {
     let arena_id = arena_id.trim();
     if arena_id.is_empty() {
         return Err("lichess_event_id is required".into());
@@ -93,12 +96,7 @@ pub async fn validate_competition_placements(
 
     let wallet_to_username: HashMap<Address, String> = roster
         .iter()
-        .map(|entry| {
-            (
-                entry.wallet,
-                entry.lichess_username.trim().to_lowercase(),
-            )
-        })
+        .map(|entry| (entry.wallet, entry.lichess_username.trim().to_lowercase()))
         .collect();
 
     for placement in placements {

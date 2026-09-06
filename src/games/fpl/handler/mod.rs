@@ -1,10 +1,10 @@
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use alloy::primitives::{Address, Bytes, B256, U256};
+use alloy::primitives::{Address, B256, Bytes, U256};
+use axum::Json;
 use axum::extract::State;
 use axum::http::StatusCode;
-use axum::Json;
 use serde::{Deserialize, Serialize};
 
 use crate::games::fpl::api::{
@@ -12,13 +12,14 @@ use crate::games::fpl::api::{
     fetch_bootstrap, fetch_classic_standings, fetch_entry, fetch_gw_points, fetch_h2h_match,
 };
 use crate::games::fpl::attestation::{
-    build_binary_attestation, build_competition_attestation, build_competition_void_attestation,
-    build_draw_attestation, build_join_permit, build_void_attestation, RankedPlacement,
+    RankedPlacement, build_binary_attestation, build_competition_attestation,
+    build_competition_void_attestation, build_draw_attestation, build_join_permit,
+    build_void_attestation,
 };
 use crate::games::fpl::models::{FplGameId, FplMarketKind};
 use crate::games::fpl::settlement::{
-    classify_gameweek, classify_h2h, classify_league, competition_placements, BinaryClass, H2hScore,
-    LeagueStanding, RosterStanding, SideScore,
+    BinaryClass, H2hScore, LeagueStanding, RosterStanding, SideScore, classify_gameweek,
+    classify_h2h, classify_league, competition_placements,
 };
 use crate::shared::min_stake::{self, GameKind};
 use crate::shared::models::AppState;
@@ -106,7 +107,8 @@ pub async fn join_attestation(
     State(state): State<Arc<AppState>>,
     Json(req): Json<JoinPermitRequest>,
 ) -> Result<Json<JoinPermitResponse>, (StatusCode, String)> {
-    min_stake::enforce_min_stake(&state, req.campaign.as_deref(), GameKind::Fpl, req.wager_id).await?;
+    min_stake::enforce_min_stake(&state, req.campaign.as_deref(), GameKind::Fpl, req.wager_id)
+        .await?;
     let meta = FplGameId::parse(&req.game_id).map_err(|e| (StatusCode::BAD_REQUEST, e))?;
     meta.ensure_directed_joiner(req.joiner_display_name.as_deref())
         .map_err(|e| (StatusCode::FORBIDDEN, e))?;
@@ -619,15 +621,10 @@ pub async fn competition_void_attestation(
     let chain_id = signer_chain_id(&state)?;
     let oracle = fpl_oracle(&state)?;
     let deadline = now_deadline();
-    let attestation = build_competition_void_attestation(
-        &state.signer,
-        oracle,
-        req.wager_id,
-        chain_id,
-        deadline,
-    )
-    .await
-    .map_err(|e| sign_error("competition void attestation", e))?;
+    let attestation =
+        build_competition_void_attestation(&state.signer, oracle, req.wager_id, chain_id, deadline)
+            .await
+            .map_err(|e| sign_error("competition void attestation", e))?;
     Ok(Json(SimpleAttestationResponse {
         oracle: attestation.oracle,
         data: attestation.data,

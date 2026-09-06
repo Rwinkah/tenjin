@@ -49,9 +49,9 @@ impl FplGameId {
 
     pub fn settle_event_id(&self) -> Result<u32, String> {
         match self.kind {
-            FplMarketKind::Gameweek | FplMarketKind::H2h => self
-                .event
-                .ok_or_else(|| "gameId missing event".to_string()),
+            FplMarketKind::Gameweek | FplMarketKind::H2h => {
+                self.event.ok_or_else(|| "gameId missing event".to_string())
+            }
             FplMarketKind::League | FplMarketKind::LeaguePot => self
                 .settle_event
                 .or(self.event)

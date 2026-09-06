@@ -1,10 +1,10 @@
 //! EIP-712 attestation builders matching `StravaOracle.sol`.
 
-use alloy::primitives::{Address, Bytes, B256, U256};
-use alloy::signers::local::PrivateKeySigner;
+use alloy::primitives::{Address, B256, Bytes, U256};
 use alloy::signers::Signer;
+use alloy::signers::local::PrivateKeySigner;
 use alloy::sol;
-use alloy::sol_types::{eip712_domain, SolStruct};
+use alloy::sol_types::{SolStruct, eip712_domain};
 
 sol! {
     #[derive(Debug)]

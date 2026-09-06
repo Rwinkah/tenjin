@@ -1,9 +1,9 @@
 use alloy::primitives::{Address, ChainId};
-use alloy::signers::local::PrivateKeySigner;
 use alloy::signers::Signer;
+use alloy::signers::local::PrivateKeySigner;
 use reqwest::Client;
-use sqlx::postgres::PgPoolOptions;
 use sqlx::PgPool;
+use sqlx::postgres::PgPoolOptions;
 use std::sync::Mutex;
 
 use crate::shared::min_stake::PriceCache;
@@ -75,14 +75,20 @@ impl AppState {
             .ok()
             .map(|s| s.trim().to_string())
             .filter(|s| !s.is_empty())
-            .map(|s| s.parse().expect("FOOTBALL_ORACLE_ADDRESS must be a 0x address"))
+            .map(|s| {
+                s.parse()
+                    .expect("FOOTBALL_ORACLE_ADDRESS must be a 0x address")
+            })
             .unwrap_or(Address::ZERO);
 
         let strava_oracle_address: Address = std::env::var("STRAVA_ORACLE_ADDRESS")
             .ok()
             .map(|s| s.trim().to_string())
             .filter(|s| !s.is_empty())
-            .map(|s| s.parse().expect("STRAVA_ORACLE_ADDRESS must be a 0x address"))
+            .map(|s| {
+                s.parse()
+                    .expect("STRAVA_ORACLE_ADDRESS must be a 0x address")
+            })
             .unwrap_or(Address::ZERO);
 
         let fpl_oracle_address: Address = std::env::var("FPL_ORACLE_ADDRESS")

@@ -1,24 +1,24 @@
 use std::sync::Arc;
 
-use alloy::primitives::{Address, Bytes, B256, U256};
+use alloy::primitives::{Address, B256, Bytes, U256};
+use axum::Json;
 use axum::extract::State;
 use axum::http::StatusCode;
-use axum::Json;
 use reqwest::header::ACCEPT;
 use serde::{Deserialize, Serialize};
 
 use crate::games::lichess::attestation::{
-    build_binary_attestation, build_competition_attestation, build_competition_join_permit,
-    build_competition_leave_permit, build_competition_void_attestation, build_draw_attestation,
-    build_void_attestation, RankedPlacement,
+    RankedPlacement, build_binary_attestation, build_competition_attestation,
+    build_competition_join_permit, build_competition_leave_permit,
+    build_competition_void_attestation, build_draw_attestation, build_void_attestation,
 };
 use crate::games::lichess::competition_settlement::{self, PlacementEntry, RosterEntry};
 use crate::games::lichess::join::{self, JoinKind};
-use crate::games::lichess::settlement::{
-    check_competition_void_eligible, check_void_eligible, prepare_competition_settle,
-    CompetitionSettlementOption,
-};
 use crate::games::lichess::models::{LichessColor, LichessGameExport, LichessStatus};
+use crate::games::lichess::settlement::{
+    CompetitionSettlementOption, check_competition_void_eligible, check_void_eligible,
+    prepare_competition_settle,
+};
 use crate::shared::min_stake::{self, GameKind};
 use crate::shared::models::AppState;
 
@@ -164,10 +164,7 @@ pub async fn draw_attestation(
 
     let game = fetch_lichess_game(&state, &req.game_id).await?;
 
-    let is_draw = matches!(
-        game.status,
-        LichessStatus::Draw | LichessStatus::Stalemate
-    );
+    let is_draw = matches!(game.status, LichessStatus::Draw | LichessStatus::Stalemate);
     if !is_draw {
         return Err((
             StatusCode::UNPROCESSABLE_ENTITY,
@@ -180,19 +177,15 @@ pub async fn draw_attestation(
 
     let chain_id = signer_chain_id(&state)?;
 
-    let attestation = build_draw_attestation(
-        &state.signer,
-        state.oracle_address,
-        req.wager_id,
-        chain_id,
-    )
-    .await
-    .map_err(|e| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("failed to sign attestation: {e}"),
-        )
-    })?;
+    let attestation =
+        build_draw_attestation(&state.signer, state.oracle_address, req.wager_id, chain_id)
+            .await
+            .map_err(|e| {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    format!("failed to sign attestation: {e}"),
+                )
+            })?;
 
     Ok(Json(DrawAttestationResponse {
         oracle: attestation.oracle,
@@ -233,19 +226,15 @@ pub async fn void_attestation(
 
     let chain_id = signer_chain_id(&state)?;
 
-    let attestation = build_void_attestation(
-        &state.signer,
-        state.oracle_address,
-        req.wager_id,
-        chain_id,
-    )
-    .await
-    .map_err(|e| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("failed to sign attestation: {e}"),
-        )
-    })?;
+    let attestation =
+        build_void_attestation(&state.signer, state.oracle_address, req.wager_id, chain_id)
+            .await
+            .map_err(|e| {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    format!("failed to sign attestation: {e}"),
+                )
+            })?;
 
     Ok(Json(VoidAttestationResponse {
         oracle: attestation.oracle,
@@ -315,10 +304,7 @@ pub async fn competition_attestation(
     })?;
 
     if roster_inputs.is_empty() {
-        return Err((
-            StatusCode::BAD_REQUEST,
-            "roster must not be empty".into(),
-        ));
+        return Err((StatusCode::BAD_REQUEST, "roster must not be empty".into()));
     }
 
     let placement_entries: Vec<PlacementEntry> = req
@@ -428,7 +414,9 @@ pub async fn competition_prepare_settle(
 
     Ok(Json(CompetitionPrepareSettleResponse {
         options,
-        recommended: prep.recommended.map(|option| settlement_option_label(option).into()),
+        recommended: prep
+            .recommended
+            .map(|option| settlement_option_label(option).into()),
         ranked_eligible: prep.ranked_eligible,
         void_eligible: prep.void_eligible,
         reason: prep.reason,
@@ -702,7 +690,9 @@ pub async fn leave_attestation(
         .await
         .map_err(|reason| (StatusCode::FORBIDDEN, reason))?;
 
-    sign_leave_permit(&state, req.wager_id, req.leaver).await.map(Json)
+    sign_leave_permit(&state, req.wager_id, req.leaver)
+        .await
+        .map(Json)
 }
 
 // ---------- helpers ----------
@@ -719,7 +709,12 @@ async fn fetch_lichess_game(
         .header(ACCEPT, "application/json")
         .send()
         .await
-        .map_err(|e| (StatusCode::BAD_GATEWAY, format!("lichess request failed: {e}")))?;
+        .map_err(|e| {
+            (
+                StatusCode::BAD_GATEWAY,
+                format!("lichess request failed: {e}"),
+            )
+        })?;
 
     let status = response.status();
     if status == reqwest::StatusCode::NOT_FOUND {
@@ -732,10 +727,12 @@ async fn fetch_lichess_game(
         ));
     }
 
-    response
-        .json::<LichessGameExport>()
-        .await
-        .map_err(|e| (StatusCode::BAD_GATEWAY, format!("invalid JSON from lichess: {e}")))
+    response.json::<LichessGameExport>().await.map_err(|e| {
+        (
+            StatusCode::BAD_GATEWAY,
+            format!("invalid JSON from lichess: {e}"),
+        )
+    })
 }
 
 fn validate_game_id(game_id: &str) -> Result<(), (StatusCode, String)> {

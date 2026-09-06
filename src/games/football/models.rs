@@ -61,7 +61,8 @@ impl FootballGameId {
             .filter(|s| !s.is_empty())
             .map(|s| s.to_ascii_lowercase())
             .ok_or_else(|| {
-                "joiner has no username; set a display name before joining a directed wager".to_string()
+                "joiner has no username; set a display name before joining a directed wager"
+                    .to_string()
             })?;
         if actual != expected {
             return Err(format!(
