@@ -33,8 +33,8 @@ impl LichessOutcomeClassifier {
         match game.status {
             LichessStatus::Created | LichessStatus::Started => LegOutcome::Ongoing,
             LichessStatus::Draw | LichessStatus::Stalemate => LegOutcome::Draw,
-            // Ambiguous fault from export alone → replay (FaultVoid).
-            // Deadline / executor paths inject explicit Forfeit / MutualVoid.
+            // Ambiguous abort/no-start → FaultVoid. Series transition maps this to
+            // match void when abandon.unilateral_scope is entire_match (anti-rematch).
             LichessStatus::Aborted
             | LichessStatus::NoStart
             | LichessStatus::Cheat

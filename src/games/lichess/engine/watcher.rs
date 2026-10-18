@@ -56,14 +56,32 @@ pub async fn watch_and_observe(
 
     let classifier =
         LichessOutcomeClassifier::new(&req.side_a_username, &req.side_b_username);
-    let outcome = classifier.classify_export(&game);
+    let mut outcome = classifier.classify_export(&game);
+
+    // Never started / still in lobby past accept deadline → mutual no-show void.
     if matches!(outcome, LegOutcome::Ongoing) {
         let state = engine
             .store()
             .get_match(SportId::Lichess, MatchId(req.match_id))
             .await
             .map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))?;
-        return Ok((state, vec![]));
+        let overdue = state
+            .legs
+            .iter()
+            .find(|l| l.id == LegId(req.leg_id))
+            .and_then(|l| l.accept_deadline)
+            .map(|d| chrono::Utc::now() > d)
+            .unwrap_or(false);
+        let still_lobby = matches!(
+            game.status,
+            crate::games::lichess::models::LichessStatus::Created
+                | crate::games::lichess::models::LichessStatus::NoStart
+        );
+        if overdue && still_lobby {
+            outcome = LegOutcome::MutualVoid;
+        } else {
+            return Ok((state, vec![]));
+        }
     }
 
     engine

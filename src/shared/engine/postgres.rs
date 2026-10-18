@@ -141,6 +141,32 @@ impl EngineStore for PostgresStore {
         serde_json::from_value(state).map_err(|e| StoreError::Message(e.to_string()))
     }
 
+    async fn list_open_matches(
+        &self,
+        sport: SportId,
+        limit: usize,
+    ) -> Result<Vec<SeriesState>, StoreError> {
+        let rows: Vec<(serde_json::Value,)> = sqlx::query_as(
+            r#"
+            SELECT state FROM engine_matches
+            WHERE sport = $1
+              AND COALESCE(state->>'phase', '') NOT IN ('match_won', 'match_void')
+            ORDER BY updated_at DESC
+            LIMIT $2
+            "#,
+        )
+        .bind(sport.as_str())
+        .bind(limit as i64)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| StoreError::Message(e.to_string()))?;
+        let mut out = Vec::with_capacity(rows.len());
+        for (state,) in rows {
+            out.push(serde_json::from_value(state).map_err(|e| StoreError::Message(e.to_string()))?);
+        }
+        Ok(out)
+    }
+
     async fn put_tournament(&self, state: &TournamentState) -> Result<(), StoreError> {
         let json = serde_json::to_value(state).map_err(|e| StoreError::Message(e.to_string()))?;
         sqlx::query(

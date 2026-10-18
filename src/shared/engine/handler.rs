@@ -386,15 +386,18 @@ pub async fn ack_event(
     Ok(Json(json!({ "ok": true })))
 }
 
-/// Process expired accept deadlines across active matches (best-effort scan via outbox spawn events).
-/// Callers may also POST deadline_timeout per match. This tick is a no-op placeholder that
-/// returns pending spawn events for executors.
+/// Enforce accept/start deadlines, then return pending outbox events for executors.
 pub async fn tick(
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<Value>, (StatusCode, String)> {
     let svc = engine(&state)?;
+    let (timed_out, _) = svc
+        .enforce_accept_deadlines(crate::shared::engine::types::SportId::Lichess, 100)
+        .await
+        .map_err(map_err)?;
     let pending = svc.pending_events(100).await.map_err(map_err)?;
     Ok(Json(json!({
+        "accept_deadlines_enforced": timed_out,
         "pending_events": pending.len(),
         "events": pending,
     })))

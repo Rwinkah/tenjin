@@ -237,10 +237,23 @@ impl SeriesState {
                 config_index: self.current_config_index(),
             },
             LegOutcome::MutualVoid => SeriesTransition::Void,
-            LegOutcome::FaultVoid => SeriesTransition::Continue {
-                spawn_next: true,
-                config_index: self.current_config_index(),
-            },
+            LegOutcome::FaultVoid => {
+                // Anti-abandon: unknown abort/no-show must not grant a free rematch when
+                // the match is configured to forfeit the whole series on unilateral leave.
+                if self.config.abandon.unilateral_is_forfeit
+                    && matches!(
+                        self.config.abandon.unilateral_scope,
+                        super::policy::UnilateralAbandonScope::EntireMatch
+                    )
+                {
+                    SeriesTransition::Void
+                } else {
+                    SeriesTransition::Continue {
+                        spawn_next: true,
+                        config_index: self.current_config_index(),
+                    }
+                }
+            }
             LegOutcome::Draw => match self.config.draw {
                 DrawPolicy::ReplayLeg => SeriesTransition::Continue {
                     spawn_next: true,
@@ -519,6 +532,32 @@ mod tests {
         assert_eq!(s.score_b, 0);
         assert!(!s.phase.is_terminal());
         assert!(ev.iter().any(|e| matches!(e, EngineEvent::SpawnLeg { .. })));
+    }
+
+    #[test]
+    fn fault_void_voids_match_when_entire_match_abandon() {
+        let now = Utc::now();
+        let (a, b) = sides();
+        let mut s = SeriesState::new_series(
+            SportId::Lichess,
+            "0x1".into(),
+            a,
+            b,
+            SeriesConfig::best_of(3),
+            vec![json!({})],
+            None,
+            now,
+        );
+        s.lock_and_start(now);
+        let leg1 = s.legs[0].id;
+        let ev = s
+            .on_leg_observation(leg1, LegOutcome::FaultVoid, now)
+            .unwrap();
+        assert_eq!(s.phase, SeriesPhase::MatchVoid);
+        assert!(
+            ev.iter()
+                .any(|e| matches!(e, EngineEvent::MatchTerminal { result: MatchTerminalResult::Void, .. }))
+        );
     }
 
     #[test]

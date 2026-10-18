@@ -42,6 +42,13 @@ pub trait EngineStore: Send + Sync {
         wager_id: &str,
     ) -> Result<SeriesState, StoreError>;
 
+    /// Non-terminal matches (for deadline enforcement). Best-effort, capped.
+    async fn list_open_matches(
+        &self,
+        sport: SportId,
+        limit: usize,
+    ) -> Result<Vec<SeriesState>, StoreError>;
+
     async fn put_tournament(&self, state: &TournamentState) -> Result<(), StoreError>;
     async fn get_tournament(
         &self,
@@ -100,6 +107,21 @@ impl EngineStore for MemoryStore {
             .copied()
             .ok_or(StoreError::NotFound)?;
         self.get_match(sport, MatchId(id)).await
+    }
+
+    async fn list_open_matches(
+        &self,
+        sport: SportId,
+        limit: usize,
+    ) -> Result<Vec<SeriesState>, StoreError> {
+        let guard = self.matches.lock().unwrap();
+        let mut out: Vec<SeriesState> = guard
+            .values()
+            .filter(|m| m.sport == sport && !m.phase.is_terminal())
+            .cloned()
+            .collect();
+        out.truncate(limit);
+        Ok(out)
     }
 
     async fn put_tournament(&self, state: &TournamentState) -> Result<(), StoreError> {

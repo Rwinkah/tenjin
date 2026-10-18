@@ -176,6 +176,56 @@ impl EngineService {
         self.observe_leg(sport, match_id, leg_id, outcome).await
     }
 
+    /// Forfeit/void legs whose accept/start deadline has elapsed.
+    /// Returns number of matches updated.
+    pub async fn enforce_accept_deadlines(
+        &self,
+        sport: SportId,
+        limit: usize,
+    ) -> Result<(usize, Vec<EngineEvent>), StoreError> {
+        let now = Utc::now();
+        let open = self.store.list_open_matches(sport, limit).await?;
+        let mut timed_out = 0usize;
+        let mut all_events = Vec::new();
+        for state in open {
+            let Some(leg) = state.legs.last() else {
+                continue;
+            };
+            let Some(deadline) = leg.accept_deadline else {
+                continue;
+            };
+            if deadline > now {
+                continue;
+            }
+            // Only pre-start phases: once InProgress, Lichess clocks / resigns apply.
+            if !matches!(
+                leg.phase,
+                super::leg::LegPhase::PendingCreate | super::leg::LegPhase::AwaitingStart
+            ) {
+                continue;
+            }
+            let fault = if state.config.abandon.unilateral_is_forfeit {
+                // Without a per-side accept signal, treat as mutual miss → void when allowed,
+                // else forfeit is unavailable so MutualVoid via Both.
+                Fault::Both
+            } else {
+                Fault::Both
+            };
+            match self
+                .deadline_timeout(sport, state.match_id, leg.id, fault)
+                .await
+            {
+                Ok((_, events)) => {
+                    timed_out += 1;
+                    all_events.extend(events);
+                }
+                Err(StoreError::Message(msg)) if msg.contains("already") => {}
+                Err(err) => return Err(err),
+            }
+        }
+        Ok((timed_out, all_events))
+    }
+
     pub async fn create_tournament(
         &self,
         req: CreateTournamentRequest,
