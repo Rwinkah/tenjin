@@ -4,13 +4,18 @@ use alloy::signers::local::PrivateKeySigner;
 use reqwest::Client;
 use sqlx::PgPool;
 use sqlx::postgres::PgPoolOptions;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
+use crate::shared::engine::postgres::PostgresStore;
+use crate::shared::engine::service::EngineService;
+use crate::shared::engine::store::MemoryStore;
 use crate::shared::min_stake::PriceCache;
 
 pub struct AppState {
     pub signer: PrivateKeySigner,
     pub http: Client,
+    /// Game-agnostic tournament/match engine (always present; memory if no DB).
+    pub engine: Option<EngineService>,
     /// Address of the deployed `LichessOracle` contract on `chain_id`.
     /// The wager contract requires `attestation.oracle == oracle_address` and
     /// `isOracleContract[oracle_address] == true`.
@@ -130,9 +135,12 @@ impl AppState {
                     .unwrap_or_else(|e| panic!("DATABASE_URL is invalid: {e}"))
             });
 
+        let engine = Some(build_engine_service(db.clone()));
+
         Self {
             signer,
             http,
+            engine,
             oracle_address,
             football_oracle_address,
             strava_oracle_address,
@@ -147,6 +155,22 @@ impl AppState {
             db,
             price_cache: Mutex::new(PriceCache::new()),
         }
+    }
+}
+
+fn build_engine_service(db: Option<PgPool>) -> EngineService {
+    if let Some(pool) = db {
+        let store = PostgresStore::new(pool);
+        // Best-effort migrate on a background task so from_env stays sync.
+        let store_for_migrate = PostgresStore::new(store.pool_clone());
+        tokio::spawn(async move {
+            if let Err(e) = store_for_migrate.migrate().await {
+                eprintln!("engine postgres migrate failed: {e}");
+            }
+        });
+        EngineService::new(Arc::new(store))
+    } else {
+        EngineService::new(Arc::new(MemoryStore::default()))
     }
 }
 

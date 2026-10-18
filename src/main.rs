@@ -12,6 +12,7 @@ use games::fpl::router::fpl_router;
 use games::lichess::router::lichess_router;
 use games::strava::router::strava_router;
 use root::router::root_router;
+use shared::engine::router::engine_router;
 use shared::models::AppState;
 
 #[tokio::main]
@@ -43,6 +44,7 @@ async fn main() {
     let app = Router::new()
         .merge(root_router())
         .merge(lichess_router())
+        .merge(engine_router())
         .nest("/football", football_router())
         .nest("/strava", strava_router())
         .nest("/fpl", fpl_router())
