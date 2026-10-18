@@ -45,6 +45,10 @@ pub fn engine_router() -> Router<Arc<AppState>> {
             post(handler::seed_tournament),
         )
         .route(
+            "/engine/{sport}/tournaments/{tournament_id}/ensure-matches",
+            post(handler::ensure_ready_matches),
+        )
+        .route(
             "/engine/{sport}/tournaments/{tournament_id}/match-won",
             post(handler::tournament_match_won),
         )

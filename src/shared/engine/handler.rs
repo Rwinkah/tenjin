@@ -316,6 +316,19 @@ pub async fn seed_tournament(
     Ok(Json(json!({ "tournament": t, "ready_match_ids": ready })))
 }
 
+pub async fn ensure_ready_matches(
+    State(state): State<Arc<AppState>>,
+    Path((sport, tournament_id)): Path<(String, Uuid)>,
+) -> Result<Json<Value>, (StatusCode, String)> {
+    let sport = parse_sport(&sport)?;
+    let svc = engine(&state)?;
+    let (t, ready) = svc
+        .ensure_ready_matches(sport, TournamentId(tournament_id))
+        .await
+        .map_err(map_err)?;
+    Ok(Json(json!({ "tournament": t, "ready_match_ids": ready })))
+}
+
 #[derive(Debug, Deserialize)]
 pub struct MatchWonBody {
     pub from_match_id: Uuid,

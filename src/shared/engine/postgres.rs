@@ -37,9 +37,14 @@ impl PostgresStore {
                 PRIMARY KEY (sport, match_id)
             )
             "#,
+            // Knockouts share one on-chain wager_id across many bracket matches.
+            // Keep a non-unique lookup index; binary cage uses LIMIT 1 by wager.
             r#"
-            CREATE UNIQUE INDEX IF NOT EXISTS engine_matches_wager_uidx
+            CREATE INDEX IF NOT EXISTS engine_matches_wager_idx
                 ON engine_matches (sport, wager_id)
+            "#,
+            r#"
+            DROP INDEX IF EXISTS engine_matches_wager_uidx
             "#,
             r#"
             CREATE TABLE IF NOT EXISTS engine_tournaments (
@@ -120,7 +125,12 @@ impl EngineStore for PostgresStore {
         wager_id: &str,
     ) -> Result<SeriesState, StoreError> {
         let row: Option<(serde_json::Value,)> = sqlx::query_as(
-            "SELECT state FROM engine_matches WHERE sport = $1 AND wager_id = $2",
+            r#"
+            SELECT state FROM engine_matches
+            WHERE sport = $1 AND wager_id = $2
+            ORDER BY updated_at DESC
+            LIMIT 1
+            "#,
         )
         .bind(sport.as_str())
         .bind(wager_id)

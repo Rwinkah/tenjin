@@ -232,6 +232,24 @@ impl EngineService {
         Ok((state, ready))
     }
 
+    /// Materialize SeriesState + SpawnLeg for ready bracket slots that are missing matches.
+    /// Safe to call after a prior seed that only partially created matches.
+    pub async fn ensure_ready_matches(
+        &self,
+        sport: SportId,
+        tournament_id: TournamentId,
+    ) -> Result<(TournamentState, Vec<MatchId>), StoreError> {
+        let state = self.store.get_tournament(sport, tournament_id).await?;
+        let ready: Vec<MatchId> = state
+            .bracket
+            .as_ref()
+            .map(|b| b.ready_matches().iter().map(|s| s.match_id).collect())
+            .unwrap_or_default();
+        self.spawn_ready_bracket_matches(&state, &ready).await?;
+        let state = self.store.get_tournament(sport, tournament_id).await?;
+        Ok((state, ready))
+    }
+
     pub async fn tournament_match_won(
         &self,
         sport: SportId,
