@@ -145,6 +145,7 @@ mod tests {
                 white: LichessPlayer { user: None },
                 black: LichessPlayer { user: None },
             },
+            moves: None,
         }
     }
 

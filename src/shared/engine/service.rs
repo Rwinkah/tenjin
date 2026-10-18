@@ -197,20 +197,12 @@ impl EngineService {
             if deadline > now {
                 continue;
             }
-            // Only pre-start phases: once InProgress, Lichess clocks / resigns apply.
-            if !matches!(
-                leg.phase,
-                super::leg::LegPhase::PendingCreate | super::leg::LegPhase::AwaitingStart
-            ) {
+            // Only PendingCreate (no external game yet). AwaitingStart with a Lichess
+            // game is enforced by the BE color-aware resign path (white/black plies).
+            if !matches!(leg.phase, super::leg::LegPhase::PendingCreate) {
                 continue;
             }
-            let fault = if state.config.abandon.unilateral_is_forfeit {
-                // Without a per-side accept signal, treat as mutual miss → void when allowed,
-                // else forfeit is unavailable so MutualVoid via Both.
-                Fault::Both
-            } else {
-                Fault::Both
-            };
+            let fault = Fault::Both;
             match self
                 .deadline_timeout(sport, state.match_id, leg.id, fault)
                 .await

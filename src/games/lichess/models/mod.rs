@@ -10,6 +10,9 @@ pub struct LichessGameExport {
     pub status: LichessStatus,
     pub winner: Option<LichessColor>,
     pub players: LichessPlayers,
+    /// Space-separated moves when export is requested with `moves=true`.
+    #[serde(default)]
+    pub moves: Option<String>,
 }
 
 /// The values Lichess emits in the `status` field.
