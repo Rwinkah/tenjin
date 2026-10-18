@@ -336,6 +336,10 @@ pub async fn enforce_min_stake(
     let wei = fetch_wg_min_amount(rpc, contract, wager_id)
         .await
         .map_err(|e| (StatusCode::BAD_GATEWAY, e))?;
+    // Free-entry wagers (0 stake) skip the campaign floor.
+    if wei.is_zero() {
+        return Ok(());
+    }
     let eth = wei_to_eth(wei).map_err(|e| (StatusCode::BAD_GATEWAY, e))?;
 
     let currency = row.min_stake_currency.to_ascii_uppercase();
@@ -401,6 +405,13 @@ mod tests {
         assert!(quoted < 5.0);
         let ok = quoted_stake(0.01, "USD", 2000.0, 0.0).unwrap();
         assert!(ok >= 5.0);
+    }
+
+    #[test]
+    fn free_entry_wei_is_zero() {
+        assert!(U256::ZERO.is_zero());
+        let eth = wei_to_eth(U256::ZERO).unwrap();
+        assert!((eth - 0.0).abs() < 1e-12);
     }
 
     #[test]
