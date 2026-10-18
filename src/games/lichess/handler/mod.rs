@@ -263,6 +263,8 @@ pub struct RosterEntryInput {
 pub struct CompetitionAttestationRequest {
     pub wager_id: B256,
     pub lichess_event_id: Option<String>,
+    /// `competition` (Lichess arena) or `knockout` (Tenjin bracket). Defaults to arena.
+    pub kind: Option<String>,
     /// Ranked placements — order must match the array passed to `lcSettleCompetition`.
     pub placements: Vec<RankedPlacementInput>,
     pub roster: Option<Vec<RosterEntryInput>>,
@@ -284,7 +286,7 @@ pub async fn competition_attestation(
 ) -> Result<Json<CompetitionAttestationResponse>, (StatusCode, String)> {
     validate_placements(&req.placements)?;
 
-    let lichess_event_id = req
+    let event_id = req
         .lichess_event_id
         .as_deref()
         .map(str::trim)
@@ -295,6 +297,13 @@ pub async fn competition_attestation(
                 "lichess_event_id is required for verified competition settlement".into(),
             )
         })?;
+
+    let kind = req
+        .kind
+        .as_deref()
+        .map(str::trim)
+        .map(str::to_ascii_lowercase)
+        .unwrap_or_else(|| "competition".into());
 
     let roster_inputs = req.roster.as_deref().ok_or_else(|| {
         (
@@ -324,14 +333,26 @@ pub async fn competition_attestation(
         })
         .collect();
 
-    competition_settlement::validate_competition_placements(
-        &state,
-        lichess_event_id,
-        &placement_entries,
-        &roster_entries,
-    )
-    .await
-    .map_err(|reason| (StatusCode::FORBIDDEN, reason))?;
+    if kind == "knockout" {
+        competition_settlement::validate_knockout_placements(
+            &state,
+            event_id,
+            &format!("{:#x}", req.wager_id),
+            &placement_entries,
+            &roster_entries,
+        )
+        .await
+        .map_err(|reason| (StatusCode::FORBIDDEN, reason))?;
+    } else {
+        competition_settlement::validate_competition_placements(
+            &state,
+            event_id,
+            &placement_entries,
+            &roster_entries,
+        )
+        .await
+        .map_err(|reason| (StatusCode::FORBIDDEN, reason))?;
+    }
 
     let placements: Vec<RankedPlacement> = req
         .placements
