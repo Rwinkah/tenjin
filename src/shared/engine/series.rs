@@ -314,30 +314,32 @@ impl SeriesState {
             SeriesTransition::Void => {
                 self.phase = SeriesPhase::MatchVoid;
                 self.updated_at = now;
-                vec![
-                    EngineEvent::MatchTerminal {
-                        sport: self.sport,
-                        match_id: self.match_id,
-                        tournament_id: self.tournament_id,
-                        winner: None,
-                        loser: None,
-                        result: MatchTerminalResult::Void,
-                    },
-                    EngineEvent::ReadyToSettle {
+                let mut events = vec![EngineEvent::MatchTerminal {
+                    sport: self.sport,
+                    match_id: self.match_id,
+                    tournament_id: self.tournament_id,
+                    winner: None,
+                    loser: None,
+                    result: MatchTerminalResult::Void,
+                }];
+                // Knockout escrow settles only when the tournament completes.
+                if self.tournament_id.is_none() {
+                    events.push(EngineEvent::ReadyToSettle {
                         sport: self.sport,
                         match_id: Some(self.match_id),
                         tournament_id: self.tournament_id,
                         wager_id: self.wager_id.clone(),
-                    },
-                    EngineEvent::Notify {
-                        sport: self.sport,
-                        match_id: Some(self.match_id),
-                        tournament_id: self.tournament_id,
-                        participants: vec![self.side_a.clone(), self.side_b.clone()],
-                        kind: NotifyKind::MatchVoid,
-                        message: "Match voided — stakes can be refunded".into(),
-                    },
-                ]
+                    });
+                }
+                events.push(EngineEvent::Notify {
+                    sport: self.sport,
+                    match_id: Some(self.match_id),
+                    tournament_id: self.tournament_id,
+                    participants: vec![self.side_a.clone(), self.side_b.clone()],
+                    kind: NotifyKind::MatchVoid,
+                    message: "Match voided — stakes can be refunded".into(),
+                });
+                events
             }
             SeriesTransition::Won { winner } => {
                 match winner {
@@ -351,30 +353,32 @@ impl SeriesState {
                 self.winner = Some(w.clone());
                 self.phase = SeriesPhase::MatchWon;
                 self.updated_at = now;
-                vec![
-                    EngineEvent::MatchTerminal {
-                        sport: self.sport,
-                        match_id: self.match_id,
-                        tournament_id: self.tournament_id,
-                        winner: Some(w.clone()),
-                        loser: Some(l),
-                        result: MatchTerminalResult::Won,
-                    },
-                    EngineEvent::ReadyToSettle {
+                let mut events = vec![EngineEvent::MatchTerminal {
+                    sport: self.sport,
+                    match_id: self.match_id,
+                    tournament_id: self.tournament_id,
+                    winner: Some(w.clone()),
+                    loser: Some(l),
+                    result: MatchTerminalResult::Won,
+                }];
+                // Knockout escrow settles only when the tournament completes.
+                if self.tournament_id.is_none() {
+                    events.push(EngineEvent::ReadyToSettle {
                         sport: self.sport,
                         match_id: Some(self.match_id),
                         tournament_id: self.tournament_id,
                         wager_id: self.wager_id.clone(),
-                    },
-                    EngineEvent::Notify {
-                        sport: self.sport,
-                        match_id: Some(self.match_id),
-                        tournament_id: self.tournament_id,
-                        participants: vec![self.side_a.clone(), self.side_b.clone()],
-                        kind: NotifyKind::MatchWon,
-                        message: format!("{} won the match", w.0),
-                    },
-                ]
+                    });
+                }
+                events.push(EngineEvent::Notify {
+                    sport: self.sport,
+                    match_id: Some(self.match_id),
+                    tournament_id: self.tournament_id,
+                    participants: vec![self.side_a.clone(), self.side_b.clone()],
+                    kind: NotifyKind::MatchWon,
+                    message: format!("{} won the match", w.0),
+                });
+                events
             }
             SeriesTransition::Continue {
                 spawn_next,

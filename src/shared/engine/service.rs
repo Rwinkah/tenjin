@@ -8,7 +8,7 @@ use std::sync::Arc;
 use super::events::{EngineEvent, Fault};
 use super::leg::LegOutcome;
 use super::policy::{DeadlinePolicy, SeriesConfig};
-use super::series::SeriesState;
+use super::series::{SeriesPhase, SeriesState};
 use super::store::{EngineStore, OutboxRow, StoreError};
 use super::tournament::TournamentState;
 use super::types::{
@@ -124,13 +124,28 @@ impl EngineService {
         outcome: LegOutcome,
     ) -> Result<(SeriesState, Vec<EngineEvent>), StoreError> {
         let mut state = self.store.get_match(sport, match_id).await?;
-        let events = state
+        let mut events = state
             .on_leg_observation(leg_id, outcome, Utc::now())
             .map_err(StoreError::Message)?;
         self.store.put_match(&state).await?;
         if !events.is_empty() {
             self.store.push_events(&events).await?;
         }
+
+        // Knockout: a finished bracket match advances the bracket and may open the next slot.
+        if state.phase == SeriesPhase::MatchWon {
+            if let (Some(tid), Some(winner)) = (state.tournament_id, state.winner.clone()) {
+                match self
+                    .tournament_match_won(sport, tid, match_id, winner.0)
+                    .await
+                {
+                    Ok((_, adv, _)) => events.extend(adv),
+                    Err(StoreError::Message(msg)) if msg.contains("already decided") => {}
+                    Err(err) => return Err(err),
+                }
+            }
+        }
+
         Ok((state, events))
     }
 
@@ -211,6 +226,9 @@ impl EngineService {
         let mut state = self.store.get_tournament(sport, tournament_id).await?;
         let ready = state.seed(Utc::now()).map_err(StoreError::Message)?;
         self.store.put_tournament(&state).await?;
+        // Create playable series/single matches for every ready bracket slot and emit SpawnLeg.
+        self.spawn_ready_bracket_matches(&state, &ready).await?;
+        let state = self.store.get_tournament(sport, tournament_id).await?;
         Ok((state, ready))
     }
 
@@ -227,7 +245,62 @@ impl EngineService {
             .map_err(StoreError::Message)?;
         self.store.put_tournament(&state).await?;
         self.store.push_events(&events).await?;
+        if let Some(next_id) = next {
+            self.spawn_ready_bracket_matches(&state, &[next_id]).await?;
+        }
+        let state = self.store.get_tournament(sport, tournament_id).await?;
         Ok((state, events, next))
+    }
+
+    /// Materialize engine matches for ready bracket slots (idempotent).
+    async fn spawn_ready_bracket_matches(
+        &self,
+        tournament: &TournamentState,
+        ready_ids: &[MatchId],
+    ) -> Result<(), StoreError> {
+        let bracket = tournament
+            .bracket
+            .as_ref()
+            .ok_or_else(|| StoreError::Message("no bracket".into()))?;
+        for mid in ready_ids {
+            if self.store.get_match(tournament.sport, *mid).await.is_ok() {
+                continue;
+            }
+            let slot = bracket
+                .slots
+                .iter()
+                .find(|s| s.match_id == *mid)
+                .ok_or_else(|| StoreError::Message("ready match missing from bracket".into()))?;
+            let side_a = slot
+                .side_a
+                .as_ref()
+                .ok_or_else(|| StoreError::Message("ready slot missing side_a".into()))?
+                .0
+                .clone();
+            let side_b = slot
+                .side_b
+                .as_ref()
+                .ok_or_else(|| StoreError::Message("ready slot missing side_b".into()))?
+                .0
+                .clone();
+            let req = CreateMatchRequest {
+                sport: tournament.sport,
+                wager_id: tournament.wager_id.clone(),
+                side_a,
+                side_b,
+                kind: slot.kind,
+                series_rule: tournament.series_rule,
+                series_n: tournament.series_n,
+                leg_configs: tournament.leg_configs.clone(),
+                deadlines: None,
+                abandon: None,
+                tournament_id: Some(tournament.id),
+                match_id: Some(*mid),
+                auto_start: true,
+            };
+            self.create_match(req).await?;
+        }
+        Ok(())
     }
 
     pub async fn pending_events(&self, limit: usize) -> Result<Vec<OutboxRow>, StoreError> {
@@ -278,4 +351,43 @@ pub struct CreateTournamentRequest {
 pub struct MatchResponse {
     pub match_state: SeriesState,
     pub events: Vec<EngineEvent>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::shared::engine::store::MemoryStore;
+    use serde_json::json;
+
+    #[tokio::test]
+    async fn seed_spawns_ready_matches_and_spawn_leg_events() {
+        let svc = EngineService::new(Arc::new(MemoryStore::default()));
+        let t = svc
+            .create_tournament(CreateTournamentRequest {
+                sport: SportId::Lichess,
+                wager_id: "0xabc".into(),
+                match_kind: MatchKind::Single,
+                round_kinds: None,
+                series_n: None,
+                series_rule: None,
+                leg_configs: vec![json!({"timeControl": "10 mins | 0 secs"})],
+                entrants: vec!["alice".into(), "bob".into(), "carol".into(), "dave".into()],
+                tournament_id: None,
+            })
+            .await
+            .unwrap();
+        let (t, ready) = svc.seed_tournament(t.sport, t.id).await.unwrap();
+        assert_eq!(ready.len(), 2);
+        for mid in &ready {
+            let m = svc.store.get_match(t.sport, *mid).await.unwrap();
+            assert_eq!(m.tournament_id, Some(t.id));
+            assert!(!m.legs.is_empty());
+        }
+        let pending = svc.pending_events(20).await.unwrap();
+        let spawns = pending
+            .iter()
+            .filter(|r| matches!(r.event, EngineEvent::SpawnLeg { .. }))
+            .count();
+        assert_eq!(spawns, 2);
+    }
 }
