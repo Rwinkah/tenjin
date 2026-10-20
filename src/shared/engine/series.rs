@@ -236,24 +236,23 @@ impl SeriesState {
                 spawn_next: false,
                 config_index: self.current_config_index(),
             },
-            LegOutcome::MutualVoid => SeriesTransition::Void,
-            LegOutcome::FaultVoid => {
-                // Anti-abandon: unknown abort/no-show must not grant a free rematch when
-                // the match is configured to forfeit the whole series on unilateral leave.
-                if self.config.abandon.unilateral_is_forfeit
-                    && matches!(
-                        self.config.abandon.unilateral_scope,
-                        super::policy::UnilateralAbandonScope::EntireMatch
-                    )
-                {
-                    SeriesTransition::Void
-                } else {
+            LegOutcome::MutualVoid => {
+                // Cage escrow: both-fault → void/refund. Knockout arms need a winner —
+                // rematch the leg instead of killing the bracket slot.
+                if self.tournament_id.is_some() {
                     SeriesTransition::Continue {
                         spawn_next: true,
                         config_index: self.current_config_index(),
                     }
+                } else {
+                    SeriesTransition::Void
                 }
             }
+            // Ambiguous fault (e.g. mid-game abort): rematch the leg — never void the series.
+            LegOutcome::FaultVoid => SeriesTransition::Continue {
+                spawn_next: true,
+                config_index: self.current_config_index(),
+            },
             LegOutcome::Draw => match self.config.draw {
                 DrawPolicy::ReplayLeg => SeriesTransition::Continue {
                     spawn_next: true,
@@ -535,7 +534,7 @@ mod tests {
     }
 
     #[test]
-    fn fault_void_voids_match_when_entire_match_abandon() {
+    fn fault_void_rematches_leg() {
         let now = Utc::now();
         let (a, b) = sides();
         let mut s = SeriesState::new_series(
@@ -553,15 +552,13 @@ mod tests {
         let ev = s
             .on_leg_observation(leg1, LegOutcome::FaultVoid, now)
             .unwrap();
-        assert_eq!(s.phase, SeriesPhase::MatchVoid);
-        assert!(
-            ev.iter()
-                .any(|e| matches!(e, EngineEvent::MatchTerminal { result: MatchTerminalResult::Void, .. }))
-        );
+        assert!(!s.phase.is_terminal());
+        assert!(ev.iter().any(|e| matches!(e, EngineEvent::SpawnLeg { .. })));
+        assert_eq!(s.legs.len(), 2);
     }
 
     #[test]
-    fn mutual_void_voids_match() {
+    fn mutual_void_voids_standalone_cage() {
         let now = Utc::now();
         let (a, b) = sides();
         let mut s = SeriesState::new_series(
@@ -584,6 +581,29 @@ mod tests {
             ev.iter()
                 .any(|e| matches!(e, EngineEvent::MatchTerminal { result: MatchTerminalResult::Void, .. }))
         );
+    }
+
+    #[test]
+    fn mutual_void_rematches_in_tournament() {
+        let now = Utc::now();
+        let (a, b) = sides();
+        let mut s = SeriesState::new_series(
+            SportId::Lichess,
+            "0x1".into(),
+            a,
+            b,
+            SeriesConfig::best_of(3),
+            vec![json!({})],
+            Some(TournamentId::new()),
+            now,
+        );
+        s.lock_and_start(now);
+        let leg1 = s.legs[0].id;
+        let ev = s
+            .on_leg_observation(leg1, LegOutcome::MutualVoid, now)
+            .unwrap();
+        assert!(!s.phase.is_terminal());
+        assert!(ev.iter().any(|e| matches!(e, EngineEvent::SpawnLeg { .. })));
     }
 
     #[test]

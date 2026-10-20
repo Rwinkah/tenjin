@@ -5,7 +5,7 @@ use reqwest::Client;
 use serde::Deserialize;
 
 use crate::games::lichess::engine::LichessOutcomeClassifier;
-use crate::games::lichess::models::{LichessColor, LichessGameExport, LichessStatus};
+use crate::games::lichess::models::{LichessGameExport, LichessStatus};
 use crate::shared::engine::service::EngineService;
 use crate::shared::engine::types::{LegId, MatchId, SportId};
 use crate::shared::engine::{LegOutcome, SeriesState, Side};
@@ -19,45 +19,6 @@ pub struct WatchLegRequest {
     pub side_b_username: String,
 }
 
-fn ply_count(game: &LichessGameExport) -> usize {
-    game.moves
-        .as_deref()
-        .map(|m| m.split_whitespace().filter(|p| !p.is_empty()).count())
-        .unwrap_or(0)
-}
-
-fn side_for_color(
-    classifier: &LichessOutcomeClassifier,
-    game: &LichessGameExport,
-    color: LichessColor,
-) -> Option<Side> {
-    let white = game
-        .players
-        .white
-        .user
-        .as_ref()
-        .map(|u| u.id.to_ascii_lowercase())
-        .unwrap_or_default();
-    let black = game
-        .players
-        .black
-        .user
-        .as_ref()
-        .map(|u| u.id.to_ascii_lowercase())
-        .unwrap_or_default();
-    let name = match color {
-        LichessColor::White => white,
-        LichessColor::Black => black,
-    };
-    if name == classifier.side_a_username {
-        Some(Side::A)
-    } else if name == classifier.side_b_username {
-        Some(Side::B)
-    } else {
-        None
-    }
-}
-
 /// Overdue start: white delinquent at 0 plies, black at 1 ply → forfeit that side.
 fn overdue_start_forfeit(
     classifier: &LichessOutcomeClassifier,
@@ -65,18 +26,15 @@ fn overdue_start_forfeit(
 ) -> Option<LegOutcome> {
     let still_pre_start = matches!(
         game.status,
-        LichessStatus::Created | LichessStatus::Started | LichessStatus::NoStart
+        LichessStatus::Created
+            | LichessStatus::Started
+            | LichessStatus::NoStart
+            | LichessStatus::Aborted
     );
     if !still_pre_start {
         return None;
     }
-    let color = match ply_count(game) {
-        0 => LichessColor::White,
-        1 => LichessColor::Black,
-        _ => return None,
-    };
-    let loser = side_for_color(classifier, game, color)?;
-    Some(LegOutcome::Forfeit { loser })
+    classifier.forfeit_delinquent_by_plies(game)
 }
 
 /// Fetch export and apply to the engine. Returns updated match + events JSON.
@@ -195,5 +153,12 @@ mod tests {
     fn two_plies_not_start_forfeit() {
         let c = LichessOutcomeClassifier::new("alice", "bob");
         assert!(overdue_start_forfeit(&c, &export(LichessStatus::Started, Some("e4 e5"))).is_none());
+    }
+
+    #[test]
+    fn aborted_zero_plies_forfeits_white() {
+        let c = LichessOutcomeClassifier::new("alice", "bob");
+        let outcome = overdue_start_forfeit(&c, &export(LichessStatus::Aborted, None)).unwrap();
+        assert_eq!(outcome, LegOutcome::Forfeit { loser: Side::A });
     }
 }

@@ -33,14 +33,16 @@ impl LichessOutcomeClassifier {
         match game.status {
             LichessStatus::Created | LichessStatus::Started => LegOutcome::Ongoing,
             LichessStatus::Draw | LichessStatus::Stalemate => LegOutcome::Draw,
-            // Ambiguous abort/no-start → FaultVoid. Series transition maps this to
-            // match void when abandon.unilateral_scope is entire_match (anti-rematch).
-            LichessStatus::Aborted
-            | LichessStatus::NoStart
-            | LichessStatus::Cheat
+            // Abort / no-start: forfeit delinquent color by ply count so every arm
+            // has a winner (0 = white never moved, 1 = black never replied).
+            // 2+ plies is ambiguous → FaultVoid → series rematch (not match void).
+            LichessStatus::Aborted | LichessStatus::NoStart => self
+                .forfeit_delinquent_by_plies(game)
+                .unwrap_or(LegOutcome::FaultVoid),
+            LichessStatus::Cheat
             | LichessStatus::UnknownFinish
             | LichessStatus::VariantEnd => LegOutcome::FaultVoid,
-            // Mate/resign/timeout without winner field should not happen; treat as void-replay.
+            // Mate/resign/timeout without winner field should not happen; rematch.
             LichessStatus::Mate
             | LichessStatus::Resign
             | LichessStatus::Timeout
@@ -48,7 +50,25 @@ impl LichessOutcomeClassifier {
         }
     }
 
-    fn side_for_color(&self, game: &LichessGameExport, color: LichessColor) -> Option<Side> {
+    pub fn ply_count(game: &LichessGameExport) -> usize {
+        game.moves
+            .as_deref()
+            .map(|m| m.split_whitespace().filter(|p| !p.is_empty()).count())
+            .unwrap_or(0)
+    }
+
+    /// 0 plies → white forfeits; 1 ply → black forfeits. None when 2+ plies.
+    pub fn forfeit_delinquent_by_plies(&self, game: &LichessGameExport) -> Option<LegOutcome> {
+        let color = match Self::ply_count(game) {
+            0 => LichessColor::White,
+            1 => LichessColor::Black,
+            _ => return None,
+        };
+        let loser = self.side_for_color(game, color)?;
+        Some(LegOutcome::Forfeit { loser })
+    }
+
+    pub fn side_for_color(&self, game: &LichessGameExport, color: LichessColor) -> Option<Side> {
         let white = game
             .players
             .white
@@ -126,6 +146,16 @@ pub fn export_json(
     white: &str,
     black: &str,
 ) -> Value {
+    export_json_with_moves(status, winner, white, black, None)
+}
+
+pub fn export_json_with_moves(
+    status: &str,
+    winner: Option<&str>,
+    white: &str,
+    black: &str,
+    moves: Option<&str>,
+) -> Value {
     let mut v = json!({
         "id": "testhash",
         "status": status,
@@ -136,6 +166,9 @@ pub fn export_json(
     });
     if let Some(w) = winner {
         v["winner"] = json!(w);
+    }
+    if let Some(m) = moves {
+        v["moves"] = json!(m);
     }
     v
 }
@@ -168,11 +201,50 @@ mod tests {
     }
 
     #[test]
-    fn abort_is_fault_void_without_fault_hint() {
+    fn abort_zero_plies_forfeits_white() {
         let c = LichessOutcomeClassifier::new("alice", "bob");
         assert_eq!(
             c.classify_json(&export_json("aborted", None, "alice", "bob")),
+            LegOutcome::Forfeit { loser: Side::A }
+        );
+    }
+
+    #[test]
+    fn abort_one_ply_forfeits_black() {
+        let c = LichessOutcomeClassifier::new("alice", "bob");
+        assert_eq!(
+            c.classify_json(&export_json_with_moves(
+                "aborted",
+                None,
+                "alice",
+                "bob",
+                Some("e4")
+            )),
+            LegOutcome::Forfeit { loser: Side::B }
+        );
+    }
+
+    #[test]
+    fn abort_two_plies_is_fault_void_for_rematch() {
+        let c = LichessOutcomeClassifier::new("alice", "bob");
+        assert_eq!(
+            c.classify_json(&export_json_with_moves(
+                "aborted",
+                None,
+                "alice",
+                "bob",
+                Some("e4 e5")
+            )),
             LegOutcome::FaultVoid
+        );
+    }
+
+    #[test]
+    fn no_start_zero_plies_forfeits_white() {
+        let c = LichessOutcomeClassifier::new("alice", "bob");
+        assert_eq!(
+            c.classify_json(&export_json("noStart", None, "alice", "bob")),
+            LegOutcome::Forfeit { loser: Side::A }
         );
     }
 }
