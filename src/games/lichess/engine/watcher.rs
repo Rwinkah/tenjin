@@ -76,29 +76,17 @@ pub async fn watch_and_observe(
         LichessOutcomeClassifier::new(&req.side_a_username, &req.side_b_username);
     let mut outcome = classifier.classify_export(&game);
 
-    // Never started past accept deadline → forfeit delinquent color (backup to BE resign).
+    // Ongoing games (including overdue 0/1-ply starts) stay Ongoing here.
+    // Color-aware start forfeits must go through the backend resign path so
+    // Lichess Board resign and engine forfeit happen in tandem — never forfeit
+    // in the engine while the Lichess game is still live.
     if matches!(outcome, LegOutcome::Ongoing) {
         let state = engine
             .store()
             .get_match(SportId::Lichess, MatchId(req.match_id))
             .await
             .map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))?;
-        let overdue = state
-            .legs
-            .iter()
-            .find(|l| l.id == LegId(req.leg_id))
-            .and_then(|l| l.accept_deadline)
-            .map(|d| chrono::Utc::now() > d)
-            .unwrap_or(false);
-        if overdue {
-            if let Some(forfeit) = overdue_start_forfeit(&classifier, &game) {
-                outcome = forfeit;
-            } else {
-                return Ok((state, vec![]));
-            }
-        } else {
-            return Ok((state, vec![]));
-        }
+        return Ok((state, vec![]));
     }
 
     engine
