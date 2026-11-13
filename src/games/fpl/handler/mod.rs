@@ -13,7 +13,7 @@ use crate::games::fpl::api::{
 };
 use crate::games::fpl::attestation::{
     RankedPlacement, build_binary_attestation, build_competition_attestation,
-    build_competition_void_attestation, build_draw_attestation, build_join_permit,
+    build_competition_void_attestation, build_draw_attestation, build_join_permit, build_leave_permit,
     build_void_attestation,
 };
 use crate::games::fpl::models::{FplGameId, FplMarketKind};
@@ -22,6 +22,7 @@ use crate::games::fpl::settlement::{
     classify_h2h, classify_league, competition_placements,
 };
 use crate::shared::min_stake::{self, GameKind};
+use crate::shared::leave::{LeaveGame, leave_permit_deadline, validate_leave};
 use crate::shared::models::AppState;
 
 const ATTESTATION_TTL_SECS: u64 = 7 * 24 * 3600;
@@ -655,4 +656,44 @@ mod tests {
         let err = ensure_join_open(None).unwrap_err();
         assert_eq!(err.0, StatusCode::UNPROCESSABLE_ENTITY);
     }
+}
+
+#[derive(Debug, Deserialize)]
+pub struct LeavePermitRequest {
+    pub wager_id: B256,
+    pub leaver: Address,
+}
+
+/// `POST /fpl/attestations/leave`
+///
+/// Checks on-chain leave eligibility, then signs `CompetitionLeave` for the contract's
+/// `...LeaveCompetitionWithPermit`. Service-key only (see `shared::service_auth`).
+pub async fn leave_attestation(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<LeavePermitRequest>,
+) -> Result<Json<JoinPermitResponse>, (StatusCode, String)> {
+    validate_leave(&state, LeaveGame::Fpl, req.wager_id, req.leaver).await?;
+    let chain_id = signer_chain_id(&state)?;
+    let oracle = fpl_oracle(&state)?;
+    let permit = build_leave_permit(
+        &state.signer,
+        oracle,
+        req.wager_id,
+        req.leaver,
+        chain_id,
+        leave_permit_deadline(),
+    )
+    .await
+    .map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("failed to sign leave permit: {e}"),
+        )
+    })?;
+
+    Ok(Json(JoinPermitResponse {
+        oracle: permit.oracle,
+        deadline: permit.deadline,
+        signature: permit.signature,
+    }))
 }

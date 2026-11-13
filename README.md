@@ -27,6 +27,7 @@ Copy `.env.example` to `.env` and set:
 | `FOOTBALL_ORACLE_ADDRESS` | Deployed `FootballOracle` (optional) |
 | `STRAVA_ORACLE_ADDRESS` | Deployed `StravaOracle` (optional; required for `/strava/*`) |
 | `PORT` | HTTP port (default `3001`) |
+| `TENJIN_SERVICE_KEY` | Shared secret wager-backend sends as `X-Tenjin-Service-Key`. Required for permit routes (join/leave/create); they return 503 when unset and 401 on a wrong key. |
 
 For local dev with wagerv2:
 

@@ -47,6 +47,13 @@ sol! {
         uint256 deadline;
     }
 
+    #[derive(Debug)]
+    struct CompetitionLeave {
+        bytes32 wagerId;
+        address leaver;
+        uint256 deadline;
+    }
+
     struct RankedPlacement {
         uint256 rank;
         address player;
@@ -209,6 +216,30 @@ pub async fn build_join_permit(
     let msg = CompetitionJoin {
         wagerId: wager_id,
         joiner,
+        deadline: U256::from(deadline),
+    };
+    let hash = msg.eip712_signing_hash(&domain);
+    let sig = sign_struct_hash(signer, hash).await?;
+    Ok(JoinPermit {
+        oracle,
+        deadline,
+        signature: Bytes::from(sig.to_vec()),
+    })
+}
+
+/// Signs `CompetitionLeave` for the contract's `...LeaveCompetitionWithPermit`.
+pub async fn build_leave_permit(
+    signer: &PrivateKeySigner,
+    oracle: Address,
+    wager_id: B256,
+    leaver: Address,
+    chain_id: u64,
+    deadline: u64,
+) -> Result<JoinPermit, alloy::signers::Error> {
+    let domain = fpl_domain(chain_id, oracle);
+    let msg = CompetitionLeave {
+        wagerId: wager_id,
+        leaver,
         deadline: U256::from(deadline),
     };
     let hash = msg.eip712_signing_hash(&domain);
