@@ -24,6 +24,7 @@ pub struct AppState {
     pub football_oracle_address: Address,
     /// Address of the deployed `StravaOracle` contract on `chain_id`.
     pub strava_oracle_address: Address,
+    pub pacer_oracle_address: Address,
     /// Address of the deployed `FplOracle` contract on `chain_id`.
     pub fpl_oracle_address: Address,
     /// football-data.org `X-Auth-Token` for fixture result verification.
@@ -34,6 +35,7 @@ pub struct AppState {
     pub lichess_contract_address: Option<Address>,
     pub football_contract_address: Option<Address>,
     pub strava_contract_address: Option<Address>,
+    pub pacer_contract_address: Option<Address>,
     pub fpl_contract_address: Option<Address>,
     /// Optional Lichess OAuth token for challenge destination verification on directed joins.
     pub lichess_api_token: Option<String>,
@@ -96,6 +98,13 @@ impl AppState {
             })
             .unwrap_or(Address::ZERO);
 
+        let pacer_oracle_address: Address = std::env::var("PACER_ORACLE_ADDRESS")
+            .ok()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .map(|s| s.parse().expect("PACER_ORACLE_ADDRESS must be a 0x address"))
+            .unwrap_or(Address::ZERO);
+
         let fpl_oracle_address: Address = std::env::var("FPL_ORACLE_ADDRESS")
             .ok()
             .map(|s| s.trim().to_string())
@@ -144,12 +153,14 @@ impl AppState {
             oracle_address,
             football_oracle_address,
             strava_oracle_address,
+            pacer_oracle_address,
             fpl_oracle_address,
             football_data_api_token,
             eth_rpc_url,
             lichess_contract_address: optional_address("LICHESS_CONTRACT_ADDRESS"),
             football_contract_address: optional_address("FOOTBALL_CONTRACT_ADDRESS"),
             strava_contract_address: optional_address("STRAVA_CONTRACT_ADDRESS"),
+            pacer_contract_address: optional_address("PACER_CONTRACT_ADDRESS"),
             fpl_contract_address: optional_address("FPL_CONTRACT_ADDRESS"),
             lichess_api_token,
             db,

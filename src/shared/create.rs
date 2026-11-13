@@ -39,6 +39,7 @@ pub enum CreateGame {
     Lichess,
     Football,
     Strava,
+    Pacer,
     Fpl,
 }
 
@@ -48,6 +49,7 @@ impl CreateGame {
             CreateGame::Lichess => "LichessOracle",
             CreateGame::Football => "FootballOracle",
             CreateGame::Strava => "StravaOracle",
+            CreateGame::Pacer => "PacerOracle",
             CreateGame::Fpl => "FplOracle",
         }
     }
@@ -57,6 +59,7 @@ impl CreateGame {
             CreateGame::Lichess => state.oracle_address,
             CreateGame::Football => state.football_oracle_address,
             CreateGame::Strava => state.strava_oracle_address,
+            CreateGame::Pacer => state.pacer_oracle_address,
             CreateGame::Fpl => state.fpl_oracle_address,
         }
     }
@@ -173,6 +176,14 @@ pub async fn strava_create_attestation(
     Json(req): Json<CreatePermitRequest>,
 ) -> Result<Json<CreatePermitResponse>, (StatusCode, String)> {
     issue(&state, CreateGame::Strava, req).await.map(Json)
+}
+
+/// `POST /pacer/attestations/create`.
+pub async fn pacer_create_attestation(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<CreatePermitRequest>,
+) -> Result<Json<CreatePermitResponse>, (StatusCode, String)> {
+    issue(&state, CreateGame::Pacer, req).await.map(Json)
 }
 
 /// `POST /fpl/attestations/create`.

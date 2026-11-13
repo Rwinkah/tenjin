@@ -29,6 +29,12 @@ sol! {
     }
 
     #[sol(rpc)]
+    contract PacerLeaveReader {
+        function pcWagerLeaveSnapshot(bytes32 wagerId, address leaver)
+            external view returns (bool exists, bool canLeave);
+    }
+
+    #[sol(rpc)]
     contract FplLeaveReader {
         function fplWagerLeaveSnapshot(bytes32 wagerId, address leaver)
             external view returns (bool exists, bool canLeave);
@@ -39,6 +45,7 @@ sol! {
 pub enum LeaveGame {
     Football,
     Strava,
+    Pacer,
     Fpl,
 }
 
@@ -47,6 +54,7 @@ impl LeaveGame {
         let (address, env) = match self {
             LeaveGame::Football => (state.football_contract_address, "FOOTBALL_CONTRACT_ADDRESS"),
             LeaveGame::Strava => (state.strava_contract_address, "STRAVA_CONTRACT_ADDRESS"),
+            LeaveGame::Pacer => (state.pacer_contract_address, "PACER_CONTRACT_ADDRESS"),
             LeaveGame::Fpl => (state.fpl_contract_address, "FPL_CONTRACT_ADDRESS"),
         };
         address.ok_or_else(|| format!("{env} is not configured"))
@@ -105,6 +113,14 @@ pub async fn validate_leave(
         LeaveGame::Strava => {
             let s = StravaLeaveReader::new(contract, provider)
                 .stWagerLeaveSnapshot(wager_id, leaver)
+                .call()
+                .await
+                .map_err(rpc_err)?;
+            (s.exists, s.canLeave)
+        }
+        LeaveGame::Pacer => {
+            let s = PacerLeaveReader::new(contract, provider)
+                .pcWagerLeaveSnapshot(wager_id, leaver)
                 .call()
                 .await
                 .map_err(rpc_err)?;

@@ -10,6 +10,7 @@ use tower_http::cors::{Any, CorsLayer};
 use games::football::router::football_router;
 use games::fpl::router::fpl_router;
 use games::lichess::router::lichess_router;
+use games::pacer::router::pacer_router;
 use games::strava::router::strava_router;
 use root::router::root_router;
 use shared::engine::router::engine_router;
@@ -47,6 +48,7 @@ async fn main() {
         .merge(engine_router())
         .nest("/football", football_router())
         .nest("/strava", strava_router())
+        .nest("/pacer", pacer_router())
         .nest("/fpl", fpl_router())
         .layer(axum::middleware::from_fn(
             shared::posthog::capture_server_errors,

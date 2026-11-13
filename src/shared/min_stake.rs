@@ -23,6 +23,7 @@ pub enum GameKind {
     Lichess,
     Football,
     Strava,
+    Pacer,
     Fpl,
 }
 
@@ -32,6 +33,7 @@ impl GameKind {
             Self::Lichess => "lichess",
             Self::Football => "football",
             Self::Strava => "strava",
+            Self::Pacer => "pacer",
             Self::Fpl => "fpl",
         }
     }
@@ -287,6 +289,7 @@ fn contract_for_game(state: &AppState, game: GameKind) -> Result<Address, String
         GameKind::Lichess => state.lichess_contract_address,
         GameKind::Football => state.football_contract_address,
         GameKind::Strava => state.strava_contract_address,
+        GameKind::Pacer => state.pacer_contract_address,
         GameKind::Fpl => state.fpl_contract_address,
     };
     addr.filter(|a| *a != Address::ZERO)
