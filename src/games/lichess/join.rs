@@ -67,9 +67,20 @@ impl JoinKind {
 #[derive(Debug, Deserialize)]
 struct BinaryGameIntent {
     v: u64,
+    /// `"cage"` on v2 series intents; absent on v1 single games.
+    #[serde(default)]
+    kind: Option<String>,
     #[serde(default)]
     open: bool,
     opponent: Option<String>,
+}
+
+impl BinaryGameIntent {
+    /// Cage series: one escrow, legs spawned by the engine after both stakes lock, so there is
+    /// no Lichess challenge before the join.
+    fn is_cage(&self) -> bool {
+        self.v == 2 && self.kind.as_deref() == Some("cage")
+    }
 }
 
 pub fn game_id_key(game_id: &str) -> B256 {
@@ -79,7 +90,7 @@ pub fn game_id_key(game_id: &str) -> B256 {
 pub fn parse_binary_intent(game_id: &str) -> Result<BinaryGameIntent, String> {
     let intent: BinaryGameIntent =
         serde_json::from_str(game_id).map_err(|e| format!("game_id is not valid JSON: {e}"))?;
-    if intent.v != 1 {
+    if intent.v != 1 && !intent.is_cage() {
         return Err(format!("unsupported game_id version {}", intent.v));
     }
     Ok(intent)
@@ -253,7 +264,8 @@ pub async fn validate_binary_join(
     let intent = parse_binary_intent(game_id)?;
     validate_binary_directed_opponent(&intent, joiner_lichess_username)?;
 
-    if challenge_id.map(str::trim).unwrap_or("").is_empty() {
+    let cage = intent.is_cage();
+    if !cage && challenge_id.map(str::trim).unwrap_or("").is_empty() {
         return Err("challenge_id is required for binary join".into());
     }
 
@@ -265,7 +277,8 @@ pub async fn validate_binary_join(
         return Err("game_id does not match on-chain wager metadata".into());
     }
 
-    if !intent.open {
+    // Directed cage opponents were already matched above; there is no challenge to inspect.
+    if !intent.open && !cage {
         if let Some(token) = state.lichess_api_token.as_deref() {
             validate_challenge_destination(
                 state,
@@ -428,6 +441,7 @@ mod tests {
     fn directed_opponent_must_match() {
         let intent = BinaryGameIntent {
             v: 1,
+            kind: None,
             open: false,
             opponent: Some("Alice".into()),
         };
@@ -439,10 +453,27 @@ mod tests {
     fn open_challenge_skips_opponent_match() {
         let intent = BinaryGameIntent {
             v: 1,
+            kind: None,
             open: true,
             opponent: None,
         };
         assert!(validate_binary_directed_opponent(&intent, "anyone").is_ok());
+    }
+
+    #[test]
+    fn cage_v2_intent_parses_and_keeps_directed_opponent() {
+        let game_id = r#"{"v":2,"kind":"cage","rule":"best_of","n":3,"legs":[],"opponent":"alice","open":false,"nonce":"x"}"#;
+        let intent = parse_binary_intent(game_id).expect("cage intent parses");
+        assert!(intent.is_cage());
+        assert!(validate_binary_directed_opponent(&intent, "Alice").is_ok());
+        assert!(validate_binary_directed_opponent(&intent, "bob").is_err());
+    }
+
+    #[test]
+    fn non_cage_v2_intent_is_rejected() {
+        let err = parse_binary_intent(r#"{"v":2,"kind":"other","open":true}"#).unwrap_err();
+        assert!(err.contains("unsupported game_id version 2"));
+        assert!(parse_binary_intent(r#"{"v":2,"open":true}"#).is_err());
     }
 
     fn test_snapshot(
