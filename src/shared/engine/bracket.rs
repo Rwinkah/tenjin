@@ -24,6 +24,19 @@ pub struct Bracket {
     pub entrants: Vec<ParticipantId>,
 }
 
+/// Seeds (1-based) in first-round bracket order for a power-of-two `size`: `[1, 4, 2, 3]` for 4,
+/// `[1, 8, 4, 5, 2, 7, 3, 6]` for 8. Adjacent pairs are first-round matches; seeds `s` and `size + 1 - s`
+/// meet, and the top two seeds can only meet in the final.
+fn standard_seed_order(size: usize) -> Vec<usize> {
+    let mut order = vec![1usize];
+    let mut len = 1;
+    while len < size {
+        len *= 2;
+        order = order.iter().flat_map(|&s| [s, len + 1 - s]).collect();
+    }
+    order
+}
+
 fn kind_for_round(round: u32, round_kinds: &[MatchKind]) -> MatchKind {
     round_kinds
         .get(round as usize)
@@ -41,12 +54,21 @@ impl Bracket {
 
     /// Seed with a match kind per round (index 0 = first round, last = final).
     /// Missing trailing rounds reuse the last entry; empty slice defaults to single.
+    ///
+    /// `entrants` is the seed order (index 0 = seed 1). First-round positions follow the standard
+    /// bracket layout (1 v N, then the halves mirrored) and the missing seeds become byes, so the byes
+    /// go to the top seeds and — because a bracket is always more than half full — every bye faces a
+    /// real player. Appending byes at the end instead pairs byes with each other once more than one is
+    /// needed, and those slots never resolve.
     pub fn seed_single_elim_rounds(entrants: &[ParticipantId], round_kinds: &[MatchKind]) -> Self {
-        let mut players = entrants.to_vec();
-        let n = players.len().next_power_of_two().max(2);
-        while players.len() < n {
-            players.push(ParticipantId::new(format!("BYE-{}", players.len())));
-        }
+        let n = entrants.len().next_power_of_two().max(2);
+        let players: Vec<ParticipantId> = standard_seed_order(n)
+            .into_iter()
+            .map(|seed| match entrants.get(seed - 1) {
+                Some(p) => p.clone(),
+                None => ParticipantId::new(format!("BYE-{seed}")),
+            })
+            .collect();
 
         let rounds = (n as f64).log2() as u32;
         let mut slots: Vec<BracketSlot> = Vec::new();
@@ -256,6 +278,76 @@ mod tests {
         let br = Bracket::seed_single_elim(&[a, b, c], MatchKind::Series);
         // 4-slot bracket with one bye — at least one winner pre-filled via bye
         assert!(br.slots.iter().any(|s| s.winner.is_some() || s.round > 0 && s.side_a.is_some()));
+    }
+
+    fn is_bye(p: &Option<ParticipantId>) -> bool {
+        p.as_ref().is_some_and(|p| p.0.starts_with("BYE-"))
+    }
+
+    fn seeded(count: usize) -> Vec<ParticipantId> {
+        (1..=count).map(|i| ParticipantId::new(format!("s{i}"))).collect()
+    }
+
+    #[test]
+    fn standard_seed_order_layout() {
+        assert_eq!(standard_seed_order(2), vec![1, 2]);
+        assert_eq!(standard_seed_order(4), vec![1, 4, 2, 3]);
+        assert_eq!(standard_seed_order(8), vec![1, 8, 4, 5, 2, 7, 3, 6]);
+    }
+
+    #[test]
+    fn no_bye_ever_meets_a_bye() {
+        for count in 2..=64 {
+            let br = Bracket::seed_single_elim(&seeded(count), MatchKind::Single);
+            for slot in br.slots.iter().filter(|s| s.round == 0) {
+                assert!(
+                    !(is_bye(&slot.side_a) && is_bye(&slot.side_b)),
+                    "{count} entrants: bye v bye in round 1"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn thirty_six_players_give_top_28_seeds_a_bye() {
+        let br = Bracket::seed_single_elim(&seeded(36), MatchKind::Single);
+        let round0: Vec<_> = br.slots.iter().filter(|s| s.round == 0).collect();
+        assert_eq!(round0.len(), 32);
+
+        // Byes are decided at seed time; the 4 real opening matches are seeds 29–36. Seeds 5–28 already
+        // meet each other in 12 ready round-2 matches.
+        let ready = br.ready_matches();
+        assert_eq!(ready.iter().filter(|s| s.round == 1).count(), 12);
+        let opening: Vec<_> = ready.iter().filter(|s| s.round == 0).collect();
+        assert_eq!(opening.len(), 4);
+        let mut playing: Vec<String> = opening
+            .iter()
+            .flat_map(|s| [s.side_a.clone().unwrap().0, s.side_b.clone().unwrap().0])
+            .collect();
+        playing.sort_by_key(|p| p[1..].parse::<u32>().unwrap());
+        assert_eq!(playing, (29..=36).map(|i| format!("s{i}")).collect::<Vec<_>>());
+
+        let advanced: Vec<_> = round0.iter().filter_map(|s| s.winner.as_ref()).collect();
+        assert_eq!(advanced.len(), 28);
+        assert!(advanced.iter().all(|p| p.0[1..].parse::<u32>().unwrap() <= 28));
+    }
+
+    #[test]
+    fn odd_bracket_plays_through_to_a_champion() {
+        // 5 players: 3 byes, then every round must become ready in turn.
+        let mut br = Bracket::seed_single_elim(&seeded(5), MatchKind::Single);
+        for _ in 0..3 {
+            let ready = br.ready_matches();
+            assert!(!ready.is_empty(), "bracket stalled");
+            let decided: Vec<_> = ready.iter().map(|s| (s.match_id, s.side_a.clone().unwrap())).collect();
+            for (id, winner) in decided {
+                br.advance(id, winner).unwrap();
+            }
+            if br.final_winner().is_some() {
+                break;
+            }
+        }
+        assert_eq!(br.final_winner().unwrap().0, "s1");
     }
 
     #[test]
