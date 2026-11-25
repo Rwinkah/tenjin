@@ -42,14 +42,12 @@ impl GameKind {
 #[derive(Debug, Clone)]
 pub struct PriceCache {
     usd: Option<(Instant, f64)>,
-    ngn: Option<(Instant, f64)>,
 }
 
 impl PriceCache {
     pub fn new() -> Self {
         Self {
             usd: None,
-            ngn: None,
         }
     }
 }
@@ -74,7 +72,6 @@ struct CoinGeckoEth {
 #[derive(Deserialize)]
 struct CoinGeckoVs {
     usd: Option<f64>,
-    ngn: Option<f64>,
 }
 
 #[derive(Deserialize)]
@@ -245,43 +242,18 @@ async fn fetch_eth_usd(state: &AppState) -> Result<f64, String> {
     Ok(price)
 }
 
-async fn fetch_eth_ngn(state: &AppState) -> Result<f64, String> {
-    if let Ok(cache) = state.price_cache.lock() {
-        if let Some((at, price)) = cache.ngn {
-            if at.elapsed() < PRICE_TTL && price > 0.0 {
-                return Ok(price);
-            }
-        }
+/// Platform peg, not a market price: the platform chain's ETH is valued at `FROZEN_ETH_NGN` naira
+/// (default 1, matching wager-backend's `FROZEN_ETH_NGN`). The app shows naira only.
+async fn fetch_eth_ngn(_state: &AppState) -> Result<f64, String> {
+    platform_eth_ngn()
+}
+
+pub fn platform_eth_ngn() -> Result<f64, String> {
+    let raw = std::env::var("FROZEN_ETH_NGN").unwrap_or_else(|_| "1".into());
+    match raw.trim().parse::<f64>() {
+        Ok(rate) if rate > 0.0 && rate.is_finite() => Ok(rate),
+        _ => Err(format!("FROZEN_ETH_NGN `{raw}` is not a positive number")),
     }
-    let gecko: Option<CoinGeckoEth> = fetch_json(
-        state,
-        "https://api.coingecko.com/api/v3/simple/price?ids=ethereum&vs_currencies=ngn",
-    )
-    .await;
-    let price = match gecko
-        .and_then(|body| body.ethereum.and_then(|e| e.ngn))
-        .filter(|p| *p > 0.0)
-    {
-        Some(p) => p,
-        None => {
-            let llama: DefiLlamaPrices = fetch_json(
-                state,
-                "https://coins.llama.fi/prices/current/coingecko:ethereum",
-            )
-            .await
-            .ok_or_else(|| "ETH/NGN rate is unavailable".to_string())?;
-            llama
-                .coins
-                .and_then(|c| c.get("coingecko:ethereum").and_then(|x| x.price))
-                .filter(|p| *p > 0.0)
-                .map(|usd| usd * 1600.0)
-                .ok_or_else(|| "ETH/NGN rate is unavailable".to_string())?
-        }
-    };
-    if let Ok(mut cache) = state.price_cache.lock() {
-        cache.ngn = Some((Instant::now(), price));
-    }
-    Ok(price)
 }
 
 fn contract_for_game(state: &AppState, game: GameKind) -> Result<Address, String> {
@@ -392,6 +364,17 @@ impl sqlx::FromRow<'_, sqlx::postgres::PgRow> for CampaignRow {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn naira_uses_the_platform_peg() {
+        // 1 ETH = ₦1 unless FROZEN_ETH_NGN says otherwise, so a ₦500 stake is 500 ETH.
+        if std::env::var("FROZEN_ETH_NGN").is_err() {
+            assert_eq!(platform_eth_ngn().unwrap(), 1.0);
+        }
+        let rate = platform_eth_ngn().unwrap();
+        assert_eq!(quoted_stake(500.0, "NGN", 0.0, rate).unwrap(), 500.0 * rate);
+    }
+
     use super::*;
 
     #[test]
